@@ -82,6 +82,22 @@ def remove_folder(con, path):
     _prune_owned_covers(con)
 
 
+def rebase_folder(con, old, new):
+    """Move a folder and its games to a new path prefix, keeping favourites,
+    play history and covers (used when a portal path is resolved)."""
+    old_p, new_p = old.rstrip("/"), new.rstrip("/")
+    if con.execute("SELECT 1 FROM folders WHERE path=?", (new_p,)).fetchone():
+        con.execute("DELETE FROM folders WHERE path=?", (old,))
+    else:
+        con.execute("UPDATE folders SET path=? WHERE path=?", (new_p, old))
+    con.execute("UPDATE games SET cover_path = ? || substr(cover_path, ?) "
+                "WHERE cover_path LIKE ?", (new_p, len(old_p) + 1, old_p + "/%"))
+    con.execute("UPDATE OR IGNORE games SET path = ? || substr(path, ?) WHERE path LIKE ?",
+                (new_p, len(old_p) + 1, old_p + "/%"))
+    con.execute("DELETE FROM games WHERE path LIKE ?", (old_p + "/%",))
+    con.commit()
+
+
 def wipe_library(con):
     con.execute("DELETE FROM folders")
     con.execute("DELETE FROM games")

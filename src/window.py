@@ -16,7 +16,7 @@ from datetime import datetime
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
-from . import covers, emulators, platforms
+from . import covers, emulators, platforms, portal
 from . import library as lib
 from .models import Game
 from .widgets import Cover, ReportingGridView, forget_thumbnail  # noqa: F401 (registers DiceGridView)
@@ -152,6 +152,7 @@ class DiceWindow(Adw.ApplicationWindow):
         self.connect("realize", self._on_realize)
 
         self._restore_state()
+        self._migrate_portal_folders()
         self._reload()
         self._setup_watching()
         self._setup_dnd()
@@ -223,6 +224,14 @@ class DiceWindow(Adw.ApplicationWindow):
         if self.settings.get_boolean("window-maximized"):
             self.maximize()
         self._tab = self.settings.get_string("last-tab") or "all"
+
+    def _migrate_portal_folders(self):
+        """Libraries added before portal paths were resolved: move them to the
+        real path when Dice can read it there."""
+        for path in lib.all_folders(self.con):
+            real = self._real_path(path)
+            if real != path:
+                lib.rebase_folder(self.con, path, real)
 
     def _on_close_request(self, *_args):
         self.settings.set_boolean("window-maximized", self.is_maximized())
@@ -637,7 +646,14 @@ class DiceWindow(Adw.ApplicationWindow):
         path = folder.get_path() if folder else None
         if not path:
             return
-        self._add_folders([path])
+        self._add_folders([self._real_path(path)])
+
+    @staticmethod
+    def _real_path(path):
+        """Prefer the real host path over a document-portal one when Dice can
+        read it, so emulators outside the sandbox can open the games too."""
+        host = portal.host_path(path)
+        return host if host != path and os.access(host, os.R_OK) else path
 
     def _add_folders(self, paths):
         for path in paths:
@@ -750,7 +766,7 @@ class DiceWindow(Adw.ApplicationWindow):
                                   on_click=self._on_preferences))
         box.append(self._info_divider())
         box.append(self._info_row("Region", row["region"] or "—"))
-        serial_key = "Game code" if row["platform"] == "gba" else "Serial"
+        serial_key = "Game code" if row["platform"] in ("gba", "nds", "3ds") else "Serial"
         box.append(self._info_row(serial_key, row["serial"] or "—"))
         if row["internal_title"] and row["internal_title"].lower() != row["title"].lower():
             box.append(self._info_row("Internal title", row["internal_title"]))
@@ -993,7 +1009,8 @@ class DiceWindow(Adw.ApplicationWindow):
         if not command:
             self._no_emulator(game.platform)
             return
-        argv = emulators.build_argv(command, game.path)
+        # Emulators run outside Dice's sandbox: give them the real path.
+        argv = emulators.build_argv(command, portal.host_path(game.path))
         if not argv:
             self._no_emulator(game.platform)
             return
@@ -1209,7 +1226,8 @@ class DiceWindow(Adw.ApplicationWindow):
             files = value.get_files()
         except Exception:
             return False
-        folders = [f.get_path() for f in files if f.get_path() and os.path.isdir(f.get_path())]
+        folders = [self._real_path(f.get_path()) for f in files
+                   if f.get_path() and os.path.isdir(f.get_path())]
         if not folders:
             self._toast("Drop a folder to add it to your library")
             return False

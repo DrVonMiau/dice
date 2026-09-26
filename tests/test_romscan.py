@@ -255,6 +255,62 @@ class IdentifyTests(unittest.TestCase):
         self.assertIsNone(romscan.identify(path))
 
 
+def make_nds(code="ASME", title="SUPERMARIO64"):
+    header = bytearray(0x200)
+    header[0x00:0x0C] = title.encode("ascii").ljust(12, b"\x00")
+    header[0x0C:0x10] = code.encode("ascii")
+    return bytes(header)
+
+
+def make_3ds(product="CTR-P-AREE"):
+    """An NCSD cartridge image whose first NCCH partition sits at 0x4000."""
+    image = bytearray(0x4200)
+    image[0x100:0x104] = b"NCSD"
+    image[0x120:0x124] = struct.pack("<I", 0x4000 // 0x200)
+    image[0x4100:0x4104] = b"NCCH"
+    image[0x4150:0x4150 + len(product)] = product.encode("ascii")
+    return bytes(image)
+
+
+class NintendoHandheldTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _write(self, name, data):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    def test_nds(self):
+        info = romscan.identify(self._write("Super Mario 64 DS (USA).nds", make_nds()))
+        self.assertEqual(info.platform, "nds")
+        self.assertEqual(info.serial, "NTR-ASME")
+        self.assertEqual(info.region, "USA")
+
+    def test_zipped_nds(self):
+        path = os.path.join(self.tmp.name, "Mario Kart DS (Europe).zip")
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("Mario Kart DS (Europe).nds", make_nds("AMCP", "MARIOKARTDS"))
+        info = romscan.identify(path)
+        self.assertEqual(info.platform, "nds")
+        self.assertEqual(info.serial, "NTR-AMCP")
+
+    def test_3ds_ncsd(self):
+        info = romscan.identify(self._write("Mario Kart 7.3ds", make_3ds("CTR-P-AMKE")))
+        self.assertEqual(info.platform, "3ds")
+        self.assertEqual(info.serial, "CTR-P-AMKE")
+        self.assertEqual(info.region, "USA")
+        self.assertEqual(info.format, "3DS")
+
+    def test_3dsx_without_header_still_counts(self):
+        info = romscan.identify(self._write("homebrew.3dsx", b"3DSX" + b"\x00" * 64))
+        self.assertEqual(info.platform, "3ds")
+
+
 class PlatformTests(unittest.TestCase):
     def test_folder_hint_innermost_wins(self):
         self.assertEqual(platforms.from_folder_hint(("PSP", "PS2")).key, "ps2")

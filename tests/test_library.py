@@ -81,6 +81,22 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual([r["platform"] for r in lib.all_games(self.con)], ["gba"])
         self.assertFalse(os.path.exists(psp["cover_path"]))
 
+    def test_rebase_folder_keeps_state(self):
+        lib.scan_all(self.con)
+        gba = self._game("gba")
+        lib.set_favorite(self.con, gba["id"], True)
+        new_root = self.root + "-real"
+        os.rename(self.root, new_root)
+        lib.rebase_folder(self.con, self.root, new_root)
+        self.assertEqual(lib.all_folders(self.con), [new_root])
+        gba = self._game("gba")
+        self.assertTrue(gba["path"].startswith(new_root + "/"))
+        self.assertEqual(gba["favorite"], 1)
+        self.assertTrue(os.path.exists(gba["cover_path"]))
+        # A rescan at the new location finds the same games, no duplicates.
+        self.assertEqual(lib.scan_all(self.con), 2)
+        self.assertEqual(len(lib.all_games(self.con)), 2)
+
     def test_remove_folder_forgets_games(self):
         lib.scan_all(self.con)
         lib.remove_folder(self.con, self.root)

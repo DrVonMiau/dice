@@ -11,8 +11,8 @@
 	<description>
 	  <p>
 	    Dice is a calm library for the game ROMs you already own. Point it at
-	    a folder and it finds your Game Boy Advance, PSP and PlayStation 2
-	    games, shows them as a shelf of box art, and launches each one in the
+	    a folder and it finds your Game Boy Advance, Nintendo DS, 3DS, PSP and
+	    PlayStation 2 games, shows them as a shelf of box art, and launches each one in the
 	    right emulator.
 	  </p>
 	  <p>Features:</p>
@@ -20,7 +20,7 @@
 	    <li>A tab per platform, plus All and Favourites</li>
 	    <li>Reads titles, serials and regions from the ROMs themselves, including CSO and BIN/CUE images</li>
 	    <li>Cover art from images beside your ROMs, from inside PSP discs, or downloaded by name</li>
-	    <li>Finds mGBA, PPSSPP and PCSX2 automatically, or uses any command you set</li>
+	    <li>Finds mGBA, melonDS, Azahar, PPSSPP and PCSX2 automatically, or uses any command you set</li>
 	    <li>Remembers when you last played and for how long</li>
 	  </ul>
 	</description>

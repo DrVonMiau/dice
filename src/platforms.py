@@ -48,6 +48,35 @@ PLATFORMS = (
         ),
     ),
     Platform(
+        key="nds",
+        label="NDS",
+        name="Nintendo DS",
+        extensions=(".nds", ".dsi"),
+        folder_hints=("nds", "ds", "nintendo ds", "nintendods"),
+        libretro_system="Nintendo - Nintendo DS",
+        emulators=(
+            Emulator("melonDS", "flatpak", "net.kuribo64.melonDS", "flatpak run net.kuribo64.melonDS {rom}"),
+            Emulator("melonDS", "bin", "melonDS", "melonDS {rom}"),
+            Emulator("DeSmuME", "flatpak", "org.desmume.DeSmuME", "flatpak run org.desmume.DeSmuME {rom}"),
+            Emulator("DeSmuME", "bin", "desmume", "desmume {rom}"),
+        ),
+    ),
+    Platform(
+        key="3ds",
+        label="3DS",
+        name="Nintendo 3DS",
+        # .cia is an installer, not a bootable image, so it isn't listed.
+        extensions=(".3ds", ".cci", ".cxi", ".3dsx"),
+        folder_hints=("3ds", "n3ds", "nintendo 3ds", "nintendo3ds"),
+        libretro_system="Nintendo - Nintendo 3DS",
+        emulators=(
+            Emulator("Azahar", "flatpak", "org.azahar_emu.Azahar", "flatpak run org.azahar_emu.Azahar {rom}"),
+            Emulator("Azahar", "bin", "azahar", "azahar {rom}"),
+            Emulator("Lime3DS", "flatpak", "io.github.lime3ds.Lime3DS", "flatpak run io.github.lime3ds.Lime3DS {rom}"),
+            Emulator("Citra", "bin", "citra-qt", "citra-qt {rom}"),
+        ),
+    ),
+    Platform(
         key="psp",
         label="PSP",
         name="PlayStation Portable",

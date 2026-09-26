@@ -91,7 +91,7 @@ _SERIAL_REGIONS = (
     (("ULAS", "UCAS", "SCAJ"), "Asia"),
 )
 
-_GBA_REGIONS = {"E": "USA", "P": "Europe", "J": "Japan", "D": "Germany",
+_NINTENDO_REGIONS = {"E": "USA", "P": "Europe", "J": "Japan", "D": "Germany",
                 "F": "France", "S": "Spain", "I": "Italy", "K": "Korea",
                 "C": "China", "X": "Europe", "Y": "Europe"}
 
@@ -325,8 +325,59 @@ def parse_gba_header(data):
         "platform": "gba",
         "internal_title": title,
         "serial": f"AGB-{code}" if code else "",
-        "region": _GBA_REGIONS.get(code[3:4], "") if len(code) == 4 else "",
+        "region": _NINTENDO_REGIONS.get(code[3:4], "") if len(code) == 4 else "",
     }
+
+
+def parse_nds_header(data):
+    """Title and game code from a DS cartridge header, or None."""
+    if len(data) < 0x20:
+        return None
+    code = data[0x0C:0x10].decode("ascii", "replace")
+    if not code.isalnum():
+        return None
+    title = data[0x00:0x0C].split(b"\x00")[0].decode("ascii", "replace").strip()
+    return {
+        "platform": "nds",
+        "internal_title": title,
+        "serial": f"NTR-{code}",
+        "region": _NINTENDO_REGIONS.get(code[3], ""),
+    }
+
+
+def parse_3ds_header(read):
+    """Product code (e.g. CTR-P-AXCE) from a 3DS image. `read(off, size)`
+    reads the file. Handles NCSD cartridge dumps (.3ds/.cci), where the first
+    NCCH partition's offset sits in the partition table, and bare NCCH (.cxi)."""
+    head = read(0, 0x200)
+    if len(head) < 0x200:
+        return None
+    if head[0x100:0x104] == b"NCSD":
+        ncch = struct.unpack("<I", head[0x120:0x124])[0] * 0x200
+        head = read(ncch, 0x200)
+    if head[0x100:0x104] != b"NCCH":
+        return None
+    product = head[0x150:0x160].split(b"\x00")[0].decode("ascii", "replace").strip()
+    code = product.split("-")[-1] if product else ""
+    return {
+        "platform": "3ds",
+        "serial": product,
+        "region": _NINTENDO_REGIONS.get(code[3:4], "") if len(code) == 4 else "",
+    }
+
+
+def _cartridge_info(key, read):
+    """Header metadata for a cartridge platform, reading via `read(off, size)`."""
+    try:
+        if key == "gba":
+            return parse_gba_header(read(0, 0x200))
+        if key == "nds":
+            return parse_nds_header(read(0, 0x200))
+        if key == "3ds":
+            return parse_3ds_header(read)
+    except (struct.error, ValueError):
+        return None
+    return None
 
 
 def _read_zip_cartridge(path):
@@ -337,7 +388,8 @@ def _read_zip_cartridge(path):
             owners = platforms.by_extension(ext)
             if owners and not info.is_dir():
                 with zf.open(info) as fh:
-                    return owners[0].key, fh.read(0x200), info.filename
+                    # Enough for every header parser (3DS reads at 0x4000+).
+                    return owners[0].key, fh.read(0x8000), info.filename
     return None
 
 
@@ -453,16 +505,21 @@ def identify(path, folder_parts=()):
         if inner is None:
             return None
         key, header, _name = inner
-        found = (parse_gba_header(header) if key == "gba" else None) or {"platform": key}
+        found = _cartridge_info(key, lambda off, size: header[off:off + size]) \
+            or {"platform": key}
         fmt = "ZIP"
-    elif ext in (".gba", ".agb"):
+    elif platforms.by_extension(ext) and ext not in (".pbp", ".cso"):
+        key = platforms.by_extension(ext)[0].key
         try:
             with open(path, "rb") as fh:
-                found = parse_gba_header(fh.read(0x200))
+                def read(off, size):
+                    fh.seek(off)
+                    return fh.read(size)
+                found = _cartridge_info(key, read)
         except OSError:
             return None
-        found = found or {"platform": "gba"}
-        fmt = "GBA"
+        found = found or {"platform": key}
+        fmt = ext.lstrip(".").upper()
     elif ext == ".pbp":
         if stem.upper() != "EBOOT":
             return None

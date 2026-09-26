@@ -27,10 +27,11 @@ right emulator. It only ever *reads* your folders.
 ## Features
 
 **Your library**
-- **A tab per platform** — All, then GBA, PSP, PS2 (only the ones you have), then Favourites
-- **Knows what's inside**: GBA cartridge headers (game code, region), PSP
+- **A tab per platform** — All, then GBA, NDS, 3DS, PSP, PS2 (only the ones you have), then Favourites
+- **Knows what's inside**: GBA and DS cartridge headers and 3DS product
+  codes (game code, region), PSP
   discs (`PARAM.SFO` title and serial) and PS2 discs (`SYSTEM.CNF` serial) —
-  including **CSO**, **BIN/CUE** and **zipped GBA** files. PSP and PS2 `.iso`s
+  including **CSO**, **BIN/CUE** and **zipped GBA/DS** files. PSP and PS2 `.iso`s
   are told apart by their contents, not their folder
 - **Search** by title, serial, region or file name; **sort** by title,
   platform, recently played, recently added or size
@@ -44,7 +45,7 @@ right emulator. It only ever *reads* your folders.
 - Or pick any image yourself — a hand-picked cover always wins
 
 **Playing**
-- **Finds mGBA, PPSSPP and PCSX2** automatically (Flatpak or native), or
+- **Finds mGBA, melonDS/DeSmuME, Azahar/Lime3DS, PPSSPP and PCSX2** automatically (Flatpak or native), or
   uses any command you set per platform in Preferences
 - Tracks **last played** and **play time**
 - Double-click a cover or press <kbd>Enter</kbd> to play
@@ -54,7 +55,7 @@ right emulator. It only ever *reads* your folders.
 Platforms live in one registry, [`src/platforms.py`](src/platforms.py): its
 extensions, folder-name hints, libretro name and emulators. Tabs are built
 from it, so a platform whose files can be recognised by extension (SNES, N64,
-Game Boy…) is a single entry. Disc systems that share `.iso`/`.chd` with
+Game Boy…) is a single entry — NDS and 3DS were added exactly that way. Disc systems that share `.iso`/`.chd` with
 others (PS1, GameCube…) also want a content check in
 [`src/romscan.py`](src/romscan.py).
 
@@ -70,7 +71,8 @@ flatpak run io.github.drvonmiau.Dice
 
 Dice launches emulators installed on your computer (it talks to the host
 through `flatpak-spawn`), so install the ones you need too, e.g. from Flathub:
-`io.mgba.mGBA`, `org.ppsspp.PPSSPP`, `net.pcsx2.PCSX2`.
+`io.mgba.mGBA`, `net.kuribo64.melonDS`, `org.azahar_emu.Azahar`,
+`org.ppsspp.PPSSPP`, `net.pcsx2.PCSX2`.
 
 ## Building from source
 
