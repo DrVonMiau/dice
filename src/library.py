@@ -54,12 +54,22 @@ COVER_DIRS = ("", "covers", "Covers", "boxart", "Boxart", "images",
               "media/covers", "media/box2dfront", "Named_Boxarts")
 
 
+# Bump when detection changes, so a rescan re-identifies files it would
+# otherwise skip as unchanged (e.g. PS1 discs once filed as PS2).
+SCAN_VERSION = 2
+
+
 def connect():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     COVERS_DIR.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     con.row_factory = sqlite3.Row
     con.executescript(SCHEMA)
+    try:
+        con.execute("ALTER TABLE games ADD COLUMN scan_version INTEGER DEFAULT 0")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
     return con
 
 
@@ -274,7 +284,7 @@ def scan_folder(con, root, progress=None):
     files = list(_iter_rom_files(root))
     total = len(files)
     known = {r["path"]: r for r in con.execute(
-        "SELECT id, path, mtime, cover_source FROM games WHERE path LIKE ?",
+        "SELECT id, path, mtime, cover_source, scan_version FROM games WHERE path LIKE ?",
         (root.rstrip("/") + "/%",))}
     seen = set()
     found = 0
@@ -286,7 +296,8 @@ def scan_folder(con, root, progress=None):
         except OSError:
             continue
         existing = known.get(path)
-        if existing is not None and existing["mtime"] == mtime:
+        if (existing is not None and existing["mtime"] == mtime
+                and existing["scan_version"] == SCAN_VERSION):
             seen.add(path)
             found += 1
             # Art dropped next to an unchanged ROM still gets picked up.
@@ -327,14 +338,16 @@ def _store(con, path, mtime, info, existing):
                 pass
     values = dict(platform=info.platform, title=info.title, serial=info.serial,
                   internal_title=info.internal_title, region=info.region,
-                  format=info.format, size=info.size, mtime=mtime)
+                  format=info.format, size=info.size, mtime=mtime,
+                  scan_version=SCAN_VERSION)
     if existing is None:
         con.execute(
             "INSERT INTO games(path, platform, title, serial, internal_title, region, "
-            "format, size, mtime, added_at, cover_path, cover_source) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            "format, size, mtime, added_at, cover_path, cover_source, scan_version) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
             (path, info.platform, info.title, info.serial, info.internal_title,
-             info.region, info.format, info.size, mtime, time.time(), cover, source))
+             info.region, info.format, info.size, mtime, time.time(), cover, source,
+             SCAN_VERSION))
         return
     sets = ", ".join(f"{k}=?" for k in values)
     params = list(values.values())

@@ -311,6 +311,69 @@ class NintendoHandheldTests(unittest.TestCase):
         self.assertEqual(info.platform, "3ds")
 
 
+def make_chd(tag):
+    """A v5 CHD header whose metadata chain holds one entry with `tag`."""
+    head = bytearray(0x7C)
+    head[0:8] = b"MComprHD"
+    head[8:12] = struct.pack(">I", 0x7C)
+    head[12:16] = struct.pack(">I", 5)
+    head[0x30:0x38] = struct.pack(">Q", 0x80)
+    entry = tag + b"\x01" + (8).to_bytes(3, "big") + struct.pack(">Q", 0) + b"\x00" * 8
+    return bytes(head) + b"\x00" * 4 + entry + b"TYPE:X\x00\x00"
+
+
+class PlayStationOneTests(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+    def _write(self, name, data):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "wb") as fh:
+            fh.write(data)
+        return path
+
+    def test_ps1_bin_cue_in_a_ps2_style_library(self):
+        iso = make_iso({"SYSTEM.CNF": b"BOOT = cdrom:\\SCUS_944.26;1\r\nTCB = 4\r\n"})
+        raw = bytearray()
+        for i in range(0, len(iso), SECTOR):
+            raw += b"\x00" * 24 + iso[i:i + SECTOR] + b"\x00" * 280
+        self._write("Spyro the Dragon (USA).bin", bytes(raw))
+        cue = self._write("Spyro the Dragon (USA).cue",
+                          b'FILE "Spyro the Dragon (USA).bin" BINARY\n  TRACK 01 MODE2/2352\n')
+        info = romscan.identify(cue)
+        self.assertEqual(info.platform, "ps1")
+        self.assertEqual(info.serial, "SCUS-94426")
+        self.assertEqual(info.region, "USA")
+
+    def test_ps1_boot_without_backslash(self):
+        path = self._write("a.iso", make_iso({"SYSTEM.CNF": b"BOOT=cdrom:SLES_012.34;1\n"}))
+        info = romscan.identify(path)
+        self.assertEqual(info.platform, "ps1")
+        self.assertEqual(info.serial, "SLES-01234")
+
+    def test_early_ps1_disc_with_psx_exe(self):
+        path = self._write("old.iso", make_iso({"PSX.EXE": b"PS-X EXE"}))
+        self.assertEqual(romscan.identify(path).platform, "ps1")
+
+    def test_ps2_still_ps2(self):
+        path = self._write("b.iso", make_iso({"SYSTEM.CNF": b"BOOT2 = cdrom0:\\SLUS_209.46;1\n"}))
+        self.assertEqual(romscan.identify(path).platform, "ps2")
+
+    def test_chd_media_type_without_hint(self):
+        cd = self._write("Crash (USA).chd", make_chd(b"CHT2"))
+        dvd = self._write("Okami (USA).chd", make_chd(b"DVD "))
+        self.assertEqual(romscan.identify(cd, ("Roms",)).platform, "ps1")
+        self.assertEqual(romscan.identify(dvd, ("Roms",)).platform, "ps2")
+
+    def test_chd_folder_hint_wins(self):
+        cd = self._write("Game.chd", make_chd(b"CHT2"))
+        self.assertEqual(romscan.identify(cd, ("PS2",)).platform, "ps2")
+        self.assertEqual(romscan.identify(cd, ("PSX",)).platform, "ps1")
+
+
 class PlatformTests(unittest.TestCase):
     def test_folder_hint_innermost_wins(self):
         self.assertEqual(platforms.from_folder_hint(("PSP", "PS2")).key, "ps2")

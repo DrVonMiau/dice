@@ -97,6 +97,20 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(lib.scan_all(self.con), 2)
         self.assertEqual(len(lib.all_games(self.con)), 2)
 
+    def test_rescan_reidentifies_after_detection_changes(self):
+        lib.scan_all(self.con)
+        psp = self._game("psp")
+        lib.set_favorite(self.con, psp["id"], True)
+        # Simulate a row filed by an older scanner under the wrong platform.
+        self.con.execute("UPDATE games SET platform='ps2', scan_version=0 WHERE id=?",
+                         (psp["id"],))
+        self.con.commit()
+        lib.scan_all(self.con)
+        row = lib.get_game(self.con, psp["id"])
+        self.assertEqual(row["platform"], "psp")
+        self.assertEqual(row["favorite"], 1)
+        self.assertEqual(row["scan_version"], lib.SCAN_VERSION)
+
     def test_remove_folder_forgets_games(self):
         lib.scan_all(self.con)
         lib.remove_folder(self.con, self.root)

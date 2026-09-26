@@ -77,6 +77,23 @@ PLATFORMS = (
         ),
     ),
     Platform(
+        key="ps1",
+        label="PS1",
+        name="PlayStation",
+        extensions=(),
+        disc_extensions=(".cue", ".chd", ".iso"),
+        folder_hints=("ps1", "psx", "psone", "ps one", "playstation", "playstation 1",
+                      "playstation1"),
+        libretro_system="Sony - PlayStation",
+        emulators=(
+            Emulator("DuckStation", "flatpak", "org.duckstation.DuckStation",
+                     "flatpak run org.duckstation.DuckStation {rom}"),
+            Emulator("DuckStation", "bin", "duckstation-qt", "duckstation-qt {rom}"),
+            Emulator("DuckStation", "bin", "duckstation", "duckstation {rom}"),
+            Emulator("Mednafen", "bin", "mednafen", "mednafen {rom}"),
+        ),
+    ),
+    Platform(
         key="psp",
         label="PSP",
         name="PlayStation Portable",

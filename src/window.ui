@@ -280,7 +280,7 @@
                       <object class="AdwStatusPage" id="empty_page">
                         <property name="icon-name">io.github.drvonmiau.Dice-symbolic</property>
                         <property name="title" translatable="yes">No Games Yet</property>
-                        <property name="description" translatable="yes">Add the folder where you keep your ROMs. Dice finds GBA, DS, 3DS, PSP and PS2 games inside it — sub-folders included — and never changes your files.</property>
+                        <property name="description" translatable="yes">Add the folder where you keep your ROMs. Dice finds GBA, DS, 3DS, PS1, PSP and PS2 games inside it — sub-folders included — and never changes your files.</property>
                         <property name="child">
                           <object class="GtkButton" id="empty_add_btn">
                             <property name="label" translatable="yes">Add ROM Folder…</property>

@@ -27,11 +27,11 @@ right emulator. It only ever *reads* your folders.
 ## Features
 
 **Your library**
-- **A tab per platform** — All, then GBA, NDS, 3DS, PSP, PS2 (only the ones you have), then Favourites
+- **A tab per platform** — All, then GBA, NDS, 3DS, PS1, PSP, PS2 (only the ones you have), then Favourites
 - **Knows what's inside**: GBA and DS cartridge headers and 3DS product
   codes (game code, region), PSP
   discs (`PARAM.SFO` title and serial) and PS2 discs (`SYSTEM.CNF` serial) —
-  including **CSO**, **BIN/CUE** and **zipped GBA/DS** files. PSP and PS2 `.iso`s
+  including **CSO**, **BIN/CUE** and **zipped GBA/DS** files. PS1, PSP and PS2 discs
   are told apart by their contents, not their folder
 - **Search** by title, serial, region or file name; **sort** by title,
   platform, recently played, recently added or size
@@ -45,7 +45,7 @@ right emulator. It only ever *reads* your folders.
 - Or pick any image yourself — a hand-picked cover always wins
 
 **Playing**
-- **Finds mGBA, melonDS/DeSmuME, Azahar/Lime3DS, PPSSPP and PCSX2** automatically (Flatpak or native), or
+- **Finds mGBA, melonDS/DeSmuME, Azahar/Lime3DS, DuckStation, PPSSPP and PCSX2** automatically (Flatpak or native), or
   uses any command you set per platform in Preferences
 - Tracks **last played** and **play time**
 - Double-click a cover or press <kbd>Enter</kbd> to play
@@ -56,7 +56,7 @@ Platforms live in one registry, [`src/platforms.py`](src/platforms.py): its
 extensions, folder-name hints, libretro name and emulators. Tabs are built
 from it, so a platform whose files can be recognised by extension (SNES, N64,
 Game Boy…) is a single entry — NDS and 3DS were added exactly that way. Disc systems that share `.iso`/`.chd` with
-others (PS1, GameCube…) also want a content check in
+others (PS1 was one; GameCube…) also want a content check in
 [`src/romscan.py`](src/romscan.py).
 
 ## Install

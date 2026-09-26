@@ -285,8 +285,18 @@ def ps2_serial_from_cnf(text):
     return None
 
 
+def ps1_serial_from_cnf(text):
+    """PS1 discs boot with 'BOOT = cdrom:\\SLUS_000.67;1' (PS2 uses BOOT2)."""
+    for line in text.splitlines():
+        key, _, value = line.partition("=")
+        if key.strip().upper() == "BOOT":
+            name = value.strip().replace("\\", "/").split("/")[-1].split(":")[-1]
+            return _format_ps_serial(name.split(";")[0])
+    return None
+
+
 def sniff_disc(source):
-    """Identify a PSP/PS2 ISO9660 image. Returns a dict or None."""
+    """Identify a PSP, PS2 or PS1 ISO9660 image. Returns a dict or None."""
     try:
         iso = Iso9660(source)
     except (ValueError, struct.error, IndexError):
@@ -310,6 +320,40 @@ def sniff_disc(source):
         if serial is not None:
             return {"platform": "ps2", "serial": serial,
                     "internal_title": iso.volume_id}
+        serial = ps1_serial_from_cnf(cnf.decode("ascii", "replace"))
+        if serial is not None:
+            return {"platform": "ps1", "serial": serial,
+                    "internal_title": iso.volume_id}
+    if iso.find("PSX.EXE"):
+        # Early PS1 discs have no SYSTEM.CNF and boot PSX.EXE directly.
+        return {"platform": "ps1", "internal_title": iso.volume_id}
+    return None
+
+
+def chd_media(path):
+    """'cd', 'dvd' or None, from a v5 CHD's metadata tags. CD images (PS1, and
+    a few PS2 titles) carry CHT2/CHTR track tags; DVD images carry 'DVD '."""
+    try:
+        with open(path, "rb") as fh:
+            head = fh.read(0x40)
+            if head[:8] != b"MComprHD" or struct.unpack(">I", head[12:16])[0] != 5:
+                return None
+            offset = struct.unpack(">Q", head[0x30:0x38])[0]
+            for _ in range(64):
+                if not offset:
+                    break
+                fh.seek(offset)
+                entry = fh.read(16)
+                if len(entry) < 16:
+                    break
+                tag = entry[:4]
+                if tag in (b"CHT2", b"CHTR", b"CHCD", b"CHGD", b"CHGT"):
+                    return "cd"
+                if tag == b"DVD ":
+                    return "dvd"
+                offset = struct.unpack(">Q", entry[8:16])[0]
+    except (OSError, struct.error):
+        return None
     return None
 
 
@@ -539,12 +583,14 @@ def identify(path, folder_parts=()):
                 found = {"platform": hint.key}
             elif ext == ".cso":
                 found = {"platform": "psp"}   # CSO is effectively PSP-only
-            elif ext in (".chd", ".cue", ".iso") and platforms.get("ps2"):
-                if ext == ".iso" and hint is None:
-                    # An ISO we couldn't read and no folder hint: not ours.
-                    return None
-                found = {"platform": "ps2"}
+            elif ext == ".chd":
+                # No folder hint: CD images are almost always PS1, DVDs PS2.
+                media = chd_media(path)
+                found = {"platform": "ps1" if media == "cd" else "ps2"}
+            elif ext == ".cue":
+                found = {"platform": "ps1"}   # a CD we couldn't read: PS1 is likelier
             else:
+                # An ISO we couldn't read and no folder hint: not ours.
                 return None
 
     try:
