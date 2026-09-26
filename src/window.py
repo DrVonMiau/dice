@@ -1,255 +1,170 @@
-"""Lyre's main window.
+"""Dice's main window.
 
-Visual design follows the Tempo-inspired mockup, reworked per follow-up
-feedback: a flat grey desktop, a "paper" card holding the library (Artists /
-Albums / Tracks, switchable from a Dialect-style dropdown in the titlebar),
-and a player panel that floats on the grey background and pushes the paper
-aside while something is playing.
+The visual design carries over from Lyre and Easel: a tinted desktop, a
+"paper" card holding the library, segmented pill tabs and a custom titlebar.
+Here the paper holds a shelf of box-art cards and the slide-in side panel
+shows the selected game: its cover, a Play button and the details read from
+the ROM (platform, region, serial, size, format, play history, path).
+
+Tabs are built from the platform registry (platforms.py): All first, then one
+tab per platform that has games, then Favourites.
 """
-import json
 import os
-import shutil
 import threading
-from pathlib import Path
+import time
+from datetime import datetime
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
+from . import covers, emulators, platforms
 from . import library as lib
-from . import metadata as meta
-from .models import Album, Artist, Playlist, Track
-from .mpris import MprisServer
-from .player import Player, Queue
-from .widgets import Swatch
+from .models import Game
+from .widgets import Cover, ReportingGridView, forget_thumbnail  # noqa: F401 (registers DiceGridView)
 
-APP_ID = "io.github.drvonmiau.Lyre"
-
-TRACK_ENTRIES = [
-    ("Play", "play"), ("Play next", "play-next"), ("Play last", "play-last"),
-    (None, None),
-    ("Show artist", "show-artist"), ("Show album", "show-album"),
-    ("Add to Favourites", "toggle-fav"),
-    ("Add to Playlist", "__playlists__"),
-    (None, None),
-    ("Edit Metadata…", "edit-meta"),
-    ("Delete from library", "delete"),
-]
-PLAYLIST_TRACK_ENTRIES = [
-    ("Play", "play"), ("Play next", "play-next"), ("Play last", "play-last"),
-    (None, None),
-    ("Show artist", "show-artist"), ("Show album", "show-album"),
-    ("Add to Favourites", "toggle-fav"),
-    ("Remove from this Playlist", "remove-from-playlist"),
-    (None, None),
-    ("Edit Metadata…", "edit-meta"),
-    ("Delete from library", "delete"),
-]
-PLAYLIST_ENTRIES = [
-    ("Play", "play"), ("Play next", "play-next"), ("Play last", "play-last"),
-    (None, None),
-    ("Rename…", "rename-playlist"),
-    (None, None),
-    ("Delete playlist", "delete"),
-]
-ALBUM_ENTRIES = [
-    ("Play", "play"), ("Play next", "play-next"), ("Play last", "play-last"),
-    (None, None),
-    ("Show artist", "show-artist"), ("Set cover image…", "set-image"),
-    (None, None),
-    ("Edit Album…", "edit-album"),
-    ("Delete from library", "delete"),
-]
-ARTIST_ENTRIES = [
-    ("Play", "play"), ("Play next", "play-next"), ("Play last", "play-last"),
-    (None, None),
-    ("Set artist image…", "set-image"),
-    (None, None),
-    ("Rename Artist…", "rename-artist"),
-    ("Remove from library", "delete"),
-]
+APP_ID = "io.github.drvonmiau.Dice"
 
 THEME_SCHEMES = {
     "light": Adw.ColorScheme.FORCE_LIGHT,
     "dark": Adw.ColorScheme.FORCE_DARK,
     "system": Adw.ColorScheme.DEFAULT,
 }
+SORTS = ("title", "platform", "played", "added", "size")
 
-VIEW_NAMES = ("albums", "tracks", "favourites", "playlists")
-
-# Fixed spacing scale (px). Every hand-set gap in the app should use one of
-# these; dynamic spacing (paper margins, paper-player gap) lives in
-# _apply_layout_metrics. Documented in the project styleguide.
-SPACE_XS, SPACE_S, SPACE_M, SPACE_L, SPACE_XL = 4, 8, 16, 24, 32
-
-# Web-style hand cursor for anything clickable.
+SPACE_S, SPACE_M, SPACE_L = 8, 16, 24
 POINTER_CURSOR = Gdk.Cursor.new_from_name("pointer")
 
-# Sort options per tab group (favourites shares the tracks group).
-SORT_OPTIONS = {
-    "artists": [("Name", "name"), ("Most played", "plays")],
-    "albums": [("Name", "title"), ("Artist", "artist")],
-    "tracks": [("Title", "title"), ("Artist", "artist"), ("Album", "album"),
-               ("Most played", "plays"), ("Recently added", "recent")],
-}
-SORT_GROUP_FOR_TAB = {"artists": "artists", "albums": "albums",
-                      "tracks": "tracks", "favourites": "tracks"}
+
+def _fmt_size(nbytes):
+    if not nbytes:
+        return "—"
+    size = float(nbytes)
+    for unit in ("B", "KB", "MB", "GB", "TB"):
+        if size < 1024 or unit == "TB":
+            return f"{size:.0f} {unit}" if unit in ("B", "KB") else f"{size:.1f} {unit}"
+        size /= 1024
+    return "—"
 
 
+def _fmt_when(ts):
+    if not ts:
+        return "Never"
+    then = datetime.fromtimestamp(ts)
+    days = (datetime.now().date() - then.date()).days
+    if days == 0:
+        return f"Today, {then:%H:%M}"
+    if days == 1:
+        return "Yesterday"
+    if days < 7:
+        return f"{days} days ago"
+    return then.strftime("%-d %b %Y")
 
-def _fmt_time(seconds):
-    seconds = max(0, int(seconds or 0))
-    return f"{seconds // 60}:{seconds % 60:02d}"
+
+def _fmt_duration(seconds):
+    if seconds < 60:
+        return "—" if not seconds else "< 1 min"
+    hours, rem = divmod(int(seconds) // 60, 60)
+    return f"{hours} h {rem} min" if hours else f"{rem} min"
 
 
-@Gtk.Template(resource_path="/io/github/drvonmiau/Lyre/window.ui")
-class MusicWindow(Adw.ApplicationWindow):
-    __gtype_name__ = "MusicWindow"
+def _sort_title(title):
+    t = title.lower()
+    for article in ("the ", "a ", "an "):
+        if t.startswith(article):
+            return t[len(article):]
+    return t
+
+
+@Gtk.Template(resource_path="/io/github/drvonmiau/Dice/window.ui")
+class DiceWindow(Adw.ApplicationWindow):
+    __gtype_name__ = "DiceWindow"
 
     toast_overlay = Gtk.Template.Child()
-    root_box = Gtk.Template.Child()
-    content_row = Gtk.Template.Child()
-    search_toggle_btn = Gtk.Template.Child()
-    sort_btn = Gtk.Template.Child()
-    nav_row = Gtk.Template.Child()
     titlebar_box = Gtk.Template.Child()
     titlebar_spacer = Gtk.Template.Child()
     wc_start = Gtk.Template.Child()
     wc_end = Gtk.Template.Child()
+    cover_scale = Gtk.Template.Child()
     menu_button = Gtk.Template.Child()
-    nav_player_controls = Gtk.Template.Child()
-    nav_prev_btn = Gtk.Template.Child()
-    nav_play_btn = Gtk.Template.Child()
-    nav_play_icon = Gtk.Template.Child()
-    nav_next_btn = Gtk.Template.Child()
-    player_show_btn = Gtk.Template.Child()
 
+    nav_row = Gtk.Template.Child()
     middle_stack = Gtk.Template.Child()
-    tab_albums = Gtk.Template.Child()
-    tab_tracks = Gtk.Template.Child()
-    tab_favourites = Gtk.Template.Child()
-    tab_playlists = Gtk.Template.Child()
+    tabs_box = Gtk.Template.Child()
     search_entry = Gtk.Template.Child()
+    sort_button = Gtk.Template.Child()
+    search_toggle_btn = Gtk.Template.Child()
 
+    content_row = Gtk.Template.Child()
     paper_stack = Gtk.Template.Child()
-    artist_grid = Gtk.Template.Child()
-    album_grid = Gtk.Template.Child()
-    track_list = Gtk.Template.Child()
-    fav_list = Gtk.Template.Child()
-    playlist_grid = Gtk.Template.Child()
+    game_grid = Gtk.Template.Child()
+    empty_page = Gtk.Template.Child()
+    none_page = Gtk.Template.Child()
 
-    detail_back_row = Gtk.Template.Child()
-    detail_play_btn = Gtk.Template.Child()
-    back_btn = Gtk.Template.Child()
-    detail_kind_label = Gtk.Template.Child()
-    detail_hero_slot = Gtk.Template.Child()
-    detail_name_label = Gtk.Template.Child()
-    detail_stats_label = Gtk.Template.Child()
-    detail_albums_section = Gtk.Template.Child()
-    detail_albums_box = Gtk.Template.Child()
-    detail_filter_label = Gtk.Template.Child()
-    detail_tracks_box = Gtk.Template.Child()
+    info_revealer = Gtk.Template.Child()
+    info_panel = Gtk.Template.Child()
+    info_preview_slot = Gtk.Template.Child()
+    info_close_btn = Gtk.Template.Child()
+    info_title = Gtk.Template.Child()
+    info_subtitle = Gtk.Template.Child()
+    info_play_btn = Gtk.Template.Child()
+    info_fav_btn = Gtk.Template.Child()
+    info_more_btn = Gtk.Template.Child()
+    info_rows_box = Gtk.Template.Child()
 
-    player_revealer = Gtk.Template.Child()
-    player_panel = Gtk.Template.Child()
-    player_art_slot = Gtk.Template.Child()
-    player_collapse_btn = Gtk.Template.Child()
-    now_title = Gtk.Template.Child()
-    now_artist = Gtk.Template.Child()
-    seek_scale = Gtk.Template.Child()
-    elapsed_label = Gtk.Template.Child()
-    duration_label = Gtk.Template.Child()
-    play_btn = Gtk.Template.Child()
-    play_icon = Gtk.Template.Child()
-    prev_btn = Gtk.Template.Child()
-    next_btn = Gtk.Template.Child()
-    shuffle_btn = Gtk.Template.Child()
-    repeat_btn = Gtk.Template.Child()
-    volume_btn = Gtk.Template.Child()
-    volume_scale = Gtk.Template.Child()
-    upnext_header = Gtk.Template.Child()
-    upnext_clear_btn = Gtk.Template.Child()
-    upnext_box = Gtk.Template.Child()
+    PANEL_WIDTH = 300
+    CARD_MARGIN = 8
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.con = lib.connect()
-        self.queue = Queue()
-        self.player = Player(on_eos=self._advance, on_error=self._on_player_error,
-                             on_stream_start=self._on_gapless_started)
-        self.player.set_gapless_source(self._gapless_next_path)
         self.settings = Gio.Settings.new(APP_ID)
-        self._gapless_pending = None
-        self._inhibit_cookie = 0
-        self._sleep_source = None
 
-        self.view = "albums"
-        self._last_tab = "albums"
-        self._detail_mode = "artist"  # artist | album | playlist
-        self._detail_artist_id = None
-        self._detail_album_id = None
-        self._detail_playlist_id = None
-        self._playlists_all = []
-        self._detail_album_filter = None
-        self._detail_album_ids = []
-        self._detail_tracks = []
-        self._player_art = None
-        self._player_collapsed = False
-        self._search_query = ""
-        self._artists_all = []
-        self._albums_all = []
-        self._tracks_all = []
-        self._visible_tracks = []
-        self._flowbox_connected = False
-        self._surface_width = 0
-        self._surface_height = 0
-
-        self._visible_favs = []
-        self._sort = {group: self.settings.get_string(f"sort-{group}")
-                      for group in SORT_OPTIONS}
-        self._track_plays = {}
-        self._artist_plays = {}
-        self._album_plays = {}
-
-        self._tab_buttons = {
-            "albums": self.tab_albums,
-            "tracks": self.tab_tracks,
-            "favourites": self.tab_favourites,
-            "playlists": self.tab_playlists,
-        }
+        self._games = []            # every Game, as loaded
+        self._rows = {}             # game id -> library row (serial etc.)
+        self._by_id = {}
+        self._tab = "all"
+        self._tab_buttons = {}
+        self._search = ""
+        self._sort = self.settings.get_string("sort")
+        if self._sort not in SORTS:
+            self._sort = "title"
+        self._cover_target = self.settings.get_int("cover-size")
+        self._cell = 150
+        self._grid_width = 0
+        self._selected_id = None
+        self._detected = {}         # platform key -> Emulator | None
+        self._running = {}          # game id -> launch time
+        self._cover_worker = None
+        self._monitors = []
+        self._watch_debounce = 0
 
         self._setup_actions()
-        self._setup_window_controls()
-        self._setup_lists()
-        self._setup_player_controls()
-        self._setup_help_overlay()
-
-        for key, btn in self._tab_buttons.items():
-            btn.connect("clicked", lambda _b, k=key: self._select_tab(k))
-        self.back_btn.connect("clicked", lambda *_: self._go_back())
-        self.detail_play_btn.connect("clicked", lambda *_: self._play_detail())
-        self.player_collapse_btn.connect("clicked", lambda *_: self._toggle_player_collapsed())
-        self.player_show_btn.connect("clicked", lambda *_: self._toggle_player_collapsed())
-        self.search_entry.connect("search-changed", self._on_search_changed)
-
-        self.connect("realize", self._on_realize)
-        self.connect("close-request", self._on_close_request)
-
-        GLib.timeout_add(200, self._tick)
+        self._setup_grid()
+        self._setup_info_panel()
         self._setup_theme()
+
+        self.search_toggle_btn.connect("toggled", self._on_toggle_search)
+        self.search_entry.connect("search-changed", self._on_search_changed)
+        self.search_entry.connect("stop-search",
+                                  lambda *_: self.search_toggle_btn.set_active(False))
+        self.cover_scale.set_value(self._cover_target)
+        self.cover_scale.connect("value-changed", self._on_cover_scale)
+        self.connect("close-request", self._on_close_request)
+        self.connect("realize", self._on_realize)
+
         self._restore_state()
-        self._reload_all()
-        self._restore_queue()
+        self._reload()
         self._setup_watching()
-        self.mpris = MprisServer(self)
+        self._setup_dnd()
         self._setup_titlebar_sides()
-        self._apply_pointer_cursors()
+        self._apply_pointer_cursors(self)
+        self._detect_emulators()
+        self._start_cover_worker()
+
+    # ------------------------------------------------------------ chrome --
 
     @staticmethod
     def _close_button_is_left(layout):
-        """True if the system's decoration layout puts the close button on
-        the left half (e.g. "close,minimize,maximize:" as on macOS-style
-        setups)."""
-        left = (layout or "").split(":")[0]
-        return "close" in left
+        return "close" in (layout or "").split(":")[0]
 
     def _setup_titlebar_sides(self):
         settings = Gtk.Settings.get_default()
@@ -259,95 +174,55 @@ class MusicWindow(Adw.ApplicationWindow):
         self._apply_titlebar_side()
 
     def _apply_titlebar_side(self):
-        """Keep the volume + menu group on the OPPOSITE side of the window
-        controls, whichever side the system (or a theme switch) puts them."""
+        """Keep the cover-size + menu group opposite the window controls."""
         settings = Gtk.Settings.get_default()
         layout = settings.get_property("gtk-decoration-layout") if settings else ""
-        aux = (self.volume_btn, self.volume_scale, self.menu_button)
         box = self.titlebar_box
-        if self._close_button_is_left(layout):
-            # window buttons on the left -> aux group to the right
+        left = self._close_button_is_left(layout)
+        if left:
             box.reorder_child_after(self.titlebar_spacer, self.wc_start)
             previous = self.titlebar_spacer
         else:
-            # window buttons on the right (GNOME default) -> aux stays left
             previous = self.wc_start
-        for widget in aux:
+        for widget in (self.cover_scale, self.menu_button):
             box.reorder_child_after(widget, previous)
             previous = widget
-        if not self._close_button_is_left(layout):
+        if not left:
             box.reorder_child_after(self.titlebar_spacer, previous)
 
-    def _apply_pointer_cursors(self):
-        """Give every static clickable a hand cursor. Dynamically created
-        rows/cards set theirs at creation time. Window controls keep the
-        system default on purpose."""
+    def _apply_pointer_cursors(self, root):
         def walk(widget):
             if isinstance(widget, Gtk.WindowControls):
                 return
-            if isinstance(widget, (Gtk.Button, Gtk.Scale)):
+            if isinstance(widget, (Gtk.Button, Gtk.Scale, Gtk.MenuButton)):
                 widget.set_cursor(POINTER_CURSOR)
             child = widget.get_first_child()
             while child:
                 walk(child)
                 child = child.get_next_sibling()
-        walk(self)
+        walk(root)
 
-    def current_cover_path(self):
-        t = self.queue.current
-        if not t or not t.album_id:
-            return None
-        album = lib.get_album(self.con, t.album_id)
-        return (album["cover_path"] if album else None) or None
+    def _setup_theme(self):
+        Adw.StyleManager.get_default().connect("notify::dark", self._on_dark_changed)
+        self._apply_theme(self.settings.get_string("theme"))
 
-    # ---------- remembered state ----------
+    def _apply_theme(self, theme):
+        Adw.StyleManager.get_default().set_color_scheme(
+            THEME_SCHEMES.get(theme, Adw.ColorScheme.DEFAULT))
+        self._on_dark_changed()
+
+    def _on_dark_changed(self, *_args):
+        if Adw.StyleManager.get_default().get_dark():
+            self.add_css_class("dark")
+        else:
+            self.remove_css_class("dark")
 
     def _restore_state(self):
         self.set_default_size(self.settings.get_int("window-width"),
                               self.settings.get_int("window-height"))
         if self.settings.get_boolean("window-maximized"):
             self.maximize()
-        self.volume_scale.set_value(self.settings.get_double("volume"))
-        self.shuffle_btn.set_active(self.settings.get_boolean("shuffle"))
-        self.repeat_btn.set_active(self.settings.get_boolean("repeat"))
-        saved_tab = self.settings.get_string("last-tab")
-        self._select_tab(saved_tab if saved_tab in VIEW_NAMES else "albums")
-
-    def _restore_queue(self):
-        """Bring back the last session's queue, paused on the saved track."""
-        raw = self.settings.get_string("queue")
-        if not raw:
-            return
-        try:
-            data = json.loads(raw)
-        except ValueError:
-            return
-        ids = [data.get("current")] + list(data.get("upcoming", []))
-        tracks = []
-        for track_id in ids:
-            row = lib.get_track(self.con, track_id) if track_id else None
-            if row:
-                tracks.append(Track(
-                    id=row["id"], path=row["path"], title=row["title"],
-                    artist=row["artist_name"], album=row["album_title"],
-                    album_id=row["album_id"], track_no=row["track_no"] or 0,
-                    duration=row["duration"] or 0.0))
-        if not tracks:
-            return
-        self.queue.play(tracks)
-        t = self.queue.current
-        self.player.load(t.path)
-        self.now_title.set_label(t.title)
-        self.now_artist.set_label(t.artist)
-        if self._player_art is None:
-            self._player_art = Swatch("cover art", size=self.PLAYER_WIDTH)
-            self._player_art.set_hexpand(True)
-            self.player_art_slot.set_child(self._player_art)
-        album = lib.get_album(self.con, t.album_id) if t.album_id else None
-        self._player_art.set_path((album["cover_path"] if album else None) or None)
-        self._apply_player_visibility()
-        self._set_play_icon("lyre-play-symbolic")
-        self._refresh_upnext()
+        self._tab = self.settings.get_string("last-tab") or "all"
 
     def _on_close_request(self, *_args):
         self.settings.set_boolean("window-maximized", self.is_maximized())
@@ -355,46 +230,300 @@ class MusicWindow(Adw.ApplicationWindow):
             width, height = self.get_default_size()
             self.settings.set_int("window-width", width)
             self.settings.set_int("window-height", height)
-        self.settings.set_double("volume", self.volume_scale.get_value())
-        self.settings.set_boolean("shuffle", self.shuffle_btn.get_active())
-        self.settings.set_boolean("repeat", self.repeat_btn.get_active())
-        self.settings.set_string("last-tab",
-                                 self._last_tab if self._last_tab in VIEW_NAMES else "albums")
-        if self.queue.current:
-            self.settings.set_string("queue", json.dumps({
-                "current": self.queue.current.id,
-                "upcoming": [t.id for t in self.queue.upcoming],
-            }))
-        else:
-            self.settings.set_string("queue", "")
+        self.settings.set_string("last-tab", self._tab)
         return False
 
-    # ---------- theme ----------
+    def _on_realize(self, *_args):
+        surface = self.get_surface()
+        if surface is not None:
+            surface.connect("notify::width", lambda *_a: self._apply_layout_metrics())
+            surface.connect("notify::height", lambda *_a: self._apply_layout_metrics())
+        self._apply_layout_metrics()
 
-    def _setup_theme(self):
-        style_manager = Adw.StyleManager.get_default()
-        style_manager.connect("notify::dark", self._on_dark_changed)
-        self._apply_theme(self.settings.get_string("theme"))
+    def _apply_layout_metrics(self):
+        """5% outer margins like the siblings; the side panel slides in on the
+        right and the paper reflows into the remaining width."""
+        surface = self.get_surface()
+        if surface is None:
+            return
+        width, height = surface.get_width(), surface.get_height()
+        if width <= 0 or height <= 0:
+            return
+        margin_x = max(SPACE_L, round(width * 0.05))
+        revealed = self.info_revealer.get_reveal_child()
+        gap = round(width * 0.03) if revealed else 0
+        self.content_row.set_margin_start(margin_x)
+        self.content_row.set_margin_end(margin_x)
+        self.nav_row.set_margin_start(margin_x)
+        self.nav_row.set_margin_end(margin_x + (gap + self.PANEL_WIDTH if revealed else 0))
+        self.info_panel.set_size_request(self.PANEL_WIDTH if revealed else 0, -1)
+        self.info_revealer.set_margin_start(gap)
 
-    def _apply_theme(self, theme):
-        Adw.StyleManager.get_default().set_color_scheme(
-            THEME_SCHEMES.get(theme, Adw.ColorScheme.DEFAULT)
+    # ----------------------------------------------------------- actions --
+
+    def _setup_actions(self):
+        simple = (
+            ("add-folder", lambda *_a: self._on_add_folder()),
+            ("rescan", lambda *_a: self._on_rescan()),
+            ("preferences", lambda *_a: self._on_preferences()),
+            ("find", lambda *_a: self.search_toggle_btn.set_active(
+                not self.search_toggle_btn.get_active())),
+            ("play", lambda *_a: self._play(self._selected_id)),
+            ("toggle-fav", lambda *_a: self._toggle_fav(self._selected_id)),
+            ("set-cover", lambda *_a: self._pick_cover(self._selected_id)),
+            ("reset-cover", lambda *_a: self._reset_cover(self._selected_id)),
+            ("fetch-cover", lambda *_a: self._fetch_cover_now(self._selected_id)),
+            ("show-in-files", lambda *_a: self._show_in_files(self._selected_id)),
+            ("copy-path", lambda *_a: self._copy_path(self._selected_id)),
         )
-        self._on_dark_changed()
+        for name, handler in simple:
+            act = Gio.SimpleAction.new(name, None)
+            act.connect("activate", handler)
+            self.add_action(act)
 
-    def _on_dark_changed(self, *_args):
-        # Our palette is hand-rolled CSS, so mirror libadwaita's dark state
-        # as a style class the stylesheet can key its dark overrides off.
-        if Adw.StyleManager.get_default().get_dark():
-            self.add_css_class("dark")
+        sort = Gio.SimpleAction.new_stateful(
+            "sort", GLib.VariantType.new("s"), GLib.Variant.new_string(self._sort))
+        sort.connect("activate", self._on_sort)
+        self.add_action(sort)
+
+        for i in range(1, 10):
+            act = Gio.SimpleAction.new(f"tab-{i}", None)
+            act.connect("activate", lambda *_a, n=i: self._select_tab_index(n - 1))
+            self.add_action(act)
+
+        app = self.get_application()
+        if app is not None:
+            app.set_accels_for_action("win.find", ["<primary>f"])
+            app.set_accels_for_action("win.add-folder", ["<primary>o"])
+            app.set_accels_for_action("win.rescan", ["<primary>r"])
+            app.set_accels_for_action("win.preferences", ["<primary>comma"])
+            for i in range(1, 10):
+                app.set_accels_for_action(f"win.tab-{i}", [f"<primary>{i}"])
+
+        key_ctl = Gtk.EventControllerKey()
+        key_ctl.connect("key-pressed", self._on_key_pressed)
+        self.add_controller(key_ctl)
+
+    def _on_key_pressed(self, _ctl, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape and self.info_revealer.get_reveal_child():
+            self._close_info()
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and self._selected_id:
+            if self.search_entry.has_focus() or self.get_focus() is self.search_entry:
+                return False
+            self._play(self._selected_id)
+            return True
+        return False
+
+    # -------------------------------------------------------------- grid --
+
+    def _setup_grid(self):
+        self.store = Gio.ListStore(item_type=Game)
+        self.game_grid.set_model(Gtk.NoSelection(model=self.store))
+        factory = Gtk.SignalListItemFactory()
+        factory.connect("setup", lambda _f, item: item.set_child(self._make_card()))
+        factory.connect("bind", lambda _f, item: self._bind_card(item.get_child(),
+                                                                 item.get_item()))
+        factory.connect("unbind", lambda _f, item: self._unbind_card(item.get_child()))
+        self.game_grid.set_factory(factory)
+        self.game_grid.set_width_cb(self._on_grid_width)
+
+    def _make_card(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        box.add_css_class("card-box")
+        box.set_margin_start(self.CARD_MARGIN)
+        box.set_margin_end(self.CARD_MARGIN)
+        box.set_margin_bottom(SPACE_M)
+
+        cover = Cover(self._cell)
+        cover.set_fill(True)
+        box.cover = cover
+
+        fav = Gtk.Button(icon_name="dice-heart-symbolic", halign=Gtk.Align.END,
+                         valign=Gtk.Align.END, margin_end=8, margin_bottom=8,
+                         tooltip_text="Favourite", css_classes=["tile-fav"])
+        fav.set_cursor(POINTER_CURSOR)
+        fav.set_visible(False)
+        fav.connect("clicked", lambda _b: self._toggle_fav(box.game_id))
+        box.fav = fav
+
+        badge = Gtk.Label(halign=Gtk.Align.START, valign=Gtk.Align.START,
+                          margin_start=8, margin_top=8, css_classes=["platform-badge"])
+        box.badge = badge
+
+        overlay = Gtk.Overlay(child=cover)
+        overlay.add_overlay(badge)
+        overlay.add_overlay(fav)
+        box.append(overlay)
+
+        title = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END,
+                          css_classes=["card-title"], margin_top=6)
+        sub = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END,
+                        css_classes=["mono-dim-sm"])
+        box.title, box.sub = title, sub
+        box.append(title)
+        box.append(sub)
+
+        click = Gtk.GestureClick(button=0)
+        click.connect("pressed", self._on_card_pressed, box)
+        box.add_controller(click)
+        hover = Gtk.EventControllerMotion()
+        hover.connect("enter", lambda *_a: fav.set_visible(True))
+        hover.connect("leave", lambda *_a: fav.set_visible(box.faved))
+        box.add_controller(hover)
+        box.set_cursor(POINTER_CURSOR)
+        box.game_id = None
+        box.faved = False
+        box.handlers = []
+        return box
+
+    def _bind_card(self, box, game):
+        box.game_id = game.id
+        box.cover.set_size(self._cell)
+        box.cover.set_game(game.title, game.cover_path)
+        box.title.set_label(game.title)
+        box.title.set_tooltip_text(game.title)
+        box.badge.set_label(platforms.label(game.platform))
+        # Platform is already the badge; the subtitle carries region + size.
+        bits = [b for b in (game.region, _fmt_size(game.size) if game.size else "") if b]
+        box.sub.set_label(" · ".join(bits))
+        self._set_card_fav(box, game.favorite)
+        if game.id == self._selected_id:
+            box.add_css_class("tile-selected")
         else:
-            self.remove_css_class("dark")
+            box.remove_css_class("tile-selected")
+        box.handlers = [
+            (game, game.connect("notify::favorite",
+                                lambda g, _p: self._set_card_fav(box, g.favorite))),
+            (game, game.connect("notify::cover-path",
+                                lambda g, _p: box.cover.set_game(g.title, g.cover_path))),
+        ]
 
-    # ---------- window chrome ----------
+    def _unbind_card(self, box):
+        for obj, handler in box.handlers:
+            obj.disconnect(handler)
+        box.handlers = []
+        box.game_id = None
 
-    def _setup_window_controls(self):
-        self.search_toggle_btn.connect("toggled", self._on_toggle_search)
-        self.search_entry.connect("stop-search", lambda *_: self.search_toggle_btn.set_active(False))
+    @staticmethod
+    def _set_card_fav(box, faved):
+        box.faved = faved
+        box.fav.set_icon_name("dice-heart-filled-symbolic" if faved else "dice-heart-symbolic")
+        if faved:
+            box.fav.add_css_class("faved")
+        else:
+            box.fav.remove_css_class("faved")
+        box.fav.set_visible(faved)
+
+    def _on_card_pressed(self, gesture, n_press, x, y, box):
+        if box.game_id is None:
+            return
+        # Clicks on the heart are the heart's; don't also select.
+        widget = box.pick(x, y, Gtk.PickFlags.DEFAULT)
+        while widget is not None and widget is not box:
+            if widget is box.fav:
+                return
+            widget = widget.get_parent()
+        if n_press == 2 and gesture.get_current_button() == 1:
+            self._play(box.game_id)
+            return
+        self._select(box.game_id)
+
+    def _on_grid_width(self, width):
+        if width == self._grid_width:
+            return
+        self._grid_width = width
+        GLib.idle_add(self._size_grid)
+
+    def _size_grid(self):
+        """Pick an exact column count for the grid's real width and size every
+        cover to its column, so cards fill the row with no ragged edge."""
+        width = self._grid_width or 800
+        slot = self._cover_target + 2 * self.CARD_MARGIN
+        n = max(2, min(10, round(width / slot)))
+        cell = max(80, width // n - 2 * self.CARD_MARGIN)
+        if self.game_grid.get_min_columns() != n or self.game_grid.get_max_columns() != n:
+            self.game_grid.set_min_columns(n)
+            self.game_grid.set_max_columns(n)
+        if cell != self._cell:
+            self._cell = cell
+            stack = [self.game_grid]
+            while stack:
+                widget = stack.pop()
+                cover = getattr(widget, "cover", None)
+                if isinstance(cover, Cover):
+                    cover.set_size(cell)
+                    continue
+                child = widget.get_first_child()
+                while child:
+                    stack.append(child)
+                    child = child.get_next_sibling()
+        return False
+
+    def _on_cover_scale(self, scale):
+        value = int(scale.get_value())
+        if value == self._cover_target:
+            return
+        self._cover_target = value
+        self.settings.set_int("cover-size", value)
+        self._size_grid()
+
+    # -------------------------------------------------------------- tabs --
+
+    def _tab_keys(self):
+        present = {g.platform for g in self._games}
+        keys = ["all"] + [p.key for p in platforms.PLATFORMS if p.key in present]
+        return keys + ["favourites"]
+
+    def _build_tabs(self):
+        child = self.tabs_box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.tabs_box.remove(child)
+            child = nxt
+        self._tab_buttons = {}
+        keys = self._tab_keys()
+        for i, key in enumerate(keys):
+            if i == 1 or (key == "favourites" and len(keys) > 2):
+                self.tabs_box.append(Gtk.Label(label="|", css_classes=["tab-sep"]))
+            if key == "all":
+                label = "All"
+            elif key == "favourites":
+                label = "Favourites"
+            else:
+                label = platforms.label(key)
+            btn = Gtk.Button(label=label, css_classes=["flat", "tab-btn"])
+            platform = platforms.get(key)
+            if platform is not None:
+                btn.set_tooltip_text(platform.name)
+            btn.set_cursor(POINTER_CURSOR)
+            btn.connect("clicked", lambda _b, k=key: self._select_tab(k))
+            self.tabs_box.append(btn)
+            self._tab_buttons[key] = btn
+        if self._tab not in self._tab_buttons:
+            self._tab = "all"
+        self._highlight_tab()
+
+    def _highlight_tab(self):
+        for key, btn in self._tab_buttons.items():
+            if key == self._tab:
+                btn.add_css_class("tab-active")
+            else:
+                btn.remove_css_class("tab-active")
+
+    def _select_tab(self, key):
+        self._tab = key
+        self._highlight_tab()
+        self._apply_filters()
+        if self.store.get_n_items():
+            self.game_grid.scroll_to(0, Gtk.ListScrollFlags.NONE, None)
+
+    def _select_tab_index(self, index):
+        keys = self._tab_keys()
+        if index < len(keys):
+            self._select_tab(keys[index])
+
+    # ---------------------------------------------------- filter / search --
 
     def _on_toggle_search(self, btn):
         active = btn.get_active()
@@ -404,814 +533,521 @@ class MusicWindow(Adw.ApplicationWindow):
         else:
             self.search_entry.set_text("")
 
-    def _on_realize(self, *_args):
-        surface = self.get_surface()
-        if surface is not None:
-            surface.connect("notify::width", self._on_surface_resize)
-            surface.connect("notify::height", self._on_surface_resize)
-            self._on_surface_resize(surface, None)
+    def _on_search_changed(self, entry):
+        self._search = entry.get_text().strip().lower()
+        self._apply_filters()
 
-    def _on_surface_resize(self, surface, _pspec):
-        self._surface_width = surface.get_width()
-        self._surface_height = surface.get_height()
-        self._apply_layout_metrics()
+    def _on_sort(self, action, value):
+        action.set_state(value)
+        self._sort = value.get_string()
+        self.settings.set_string("sort", self._sort)
+        self._apply_filters()
+
+    def _matches(self, game):
+        if self._tab == "favourites" and not game.favorite:
+            return False
+        if self._tab not in ("all", "favourites") and game.platform != self._tab:
+            return False
+        if not self._search:
+            return True
+        row = self._rows.get(game.id)
+        hay = " ".join([game.title, game.region, platforms.label(game.platform),
+                        row["serial"] if row else "", os.path.basename(game.path)]).lower()
+        return all(word in hay for word in self._search.split())
+
+    def _sorted(self, games):
+        order = {p.key: i for i, p in enumerate(platforms.PLATFORMS)}
+        if self._sort == "platform":
+            return sorted(games, key=lambda g: (order.get(g.platform, 99), _sort_title(g.title)))
+        if self._sort == "played":
+            return sorted(games, key=lambda g: (-g.last_played, _sort_title(g.title)))
+        if self._sort == "added":
+            return sorted(games, key=lambda g: (-g.added_at, _sort_title(g.title)))
+        if self._sort == "size":
+            return sorted(games, key=lambda g: -g.size)
+        return sorted(games, key=lambda g: _sort_title(g.title))
+
+    def _apply_filters(self):
+        games = self._sorted([g for g in self._games if self._matches(g)])
+        self.store.splice(0, self.store.get_n_items(), games)
+        if not self._games:
+            self.paper_stack.set_visible_child_name("empty")
+        elif not games:
+            if self._search:
+                self.none_page.set_title("No Matches")
+                self.none_page.set_description(f"Nothing matches “{self._search}”.")
+            elif self._tab == "favourites":
+                self.none_page.set_title("No Favourites Yet")
+                self.none_page.set_description(
+                    "Hover a cover and click its heart, or use the heart in the "
+                    "side panel, to keep a game here.")
+            else:
+                self.none_page.set_title("Nothing Here")
+                self.none_page.set_description("")
+            self.paper_stack.set_visible_child_name("none")
+        else:
+            self.paper_stack.set_visible_child_name("grid")
+
+    # ------------------------------------------------------------ loading --
+
+    def _game_from_row(self, r):
+        return Game(id=r["id"], path=r["path"], platform=r["platform"], title=r["title"],
+                    region=r["region"] or "", size=r["size"] or 0,
+                    cover_path=r["cover_path"] or "", favorite=bool(r["favorite"]),
+                    added_at=r["added_at"] or 0.0, last_played=r["last_played"] or 0.0)
+
+    def _reload(self):
+        rows = lib.all_games(self.con)
+        self._rows = {r["id"]: r for r in rows}
+        self._games = [self._game_from_row(r) for r in rows]
+        self._by_id = {g.id: g for g in self._games}
+        self._build_tabs()
+        self._apply_filters()
+        if self._selected_id is not None:
+            if self._selected_id in self._by_id:
+                self._show_info(self._selected_id)
+            else:
+                self._close_info()
         return False
 
-    PLAYER_WIDTH = 300
-
-    def _apply_layout_metrics(self):
-        """5% top/left/right margins, paper flush to the window bottom, 5% gap,
-        player fixed at 300px. On wide windows the margins absorb the extra
-        space so the paper + player block stays centered."""
-        width, height = self._surface_width, self._surface_height
-        if width <= 0 or height <= 0:
-            return
-        margin_y = round(height * 0.05)
-        margin_x = max(SPACE_L, round(width * 0.05))
-        revealed = self.player_revealer.get_reveal_child()
-        if revealed:
-            gap = round(width * 0.05)
-            ideal_paper = round(width * 0.60)
-            centered = (width - ideal_paper - gap - self.PLAYER_WIDTH) // 2
-            margin_x = max(margin_x, centered)
-        else:
-            gap = 0
-        self.content_row.set_margin_start(margin_x)
-        self.content_row.set_margin_end(margin_x)
-        # The nav band supplies the paper's top gap (fixed spacing tokens).
-        self.content_row.set_margin_top(0)
-        self.content_row.set_margin_bottom(0)
-        # The nav band always spans exactly the paper: tabs at the paper's
-        # left edge, sort/search at its right — even when the player panel
-        # is out (its width + gap are added to the end margin).
-        self.nav_row.set_margin_start(margin_x)
-        self.nav_row.set_margin_end(margin_x + (gap + self.PLAYER_WIDTH if revealed else 0))
-        self.player_panel.set_size_request(self.PLAYER_WIDTH if revealed else 0, -1)
-        self.player_revealer.set_margin_start(gap)
-        self.player_revealer.set_margin_bottom(margin_y)
-        if self._player_art is not None:
-            self._player_art.set_size(self.PLAYER_WIDTH)
-
-    def _set_player_revealed(self, revealed):
-        self.player_revealer.set_reveal_child(revealed)
-        self._apply_layout_metrics()
-
-    def _apply_player_visibility(self):
-        """Reveal the player when something is loaded, unless the user has
-        collapsed it. The collapse button lives on the cover (hover-revealed);
-        when the panel is hidden, a compact restore button appears in the nav
-        bar so the panel can be brought back."""
-        has_track = self.queue.current is not None
-        revealed = has_track and not self._player_collapsed
-        self._set_player_revealed(revealed)
-        # The compact prev / play-pause / next + expand cluster in the nav bar
-        # only appears while the panel is collapsed, so playback stays
-        # reachable without duplicating the panel's transport when it's open.
-        self.nav_player_controls.set_visible(has_track and self._player_collapsed)
-
-    def _toggle_player_collapsed(self):
-        self._player_collapsed = not self._player_collapsed
-        self._apply_player_visibility()
-
-    def _setup_help_overlay(self):
-        builder = Gtk.Builder.new_from_resource("/io/github/drvonmiau/Lyre/gtk/help-overlay.ui")
-        overlay = builder.get_object("help_overlay")
-        if overlay is not None:
-            self.set_help_overlay(overlay)
-
-    # ---------- actions ----------
-
-    def _setup_actions(self):
-        add_folder = Gio.SimpleAction.new("add-folder", None)
-        add_folder.connect("activate", lambda *_a: self._on_add_folder())
-        self.add_action(add_folder)
-
-        rescan = Gio.SimpleAction.new("rescan", None)
-        rescan.connect("activate", lambda *_a: self._on_rescan())
-        self.add_action(rescan)
-
-        fetch_metadata = Gio.SimpleAction.new("fetch-metadata", None)
-        fetch_metadata.connect("activate", lambda *_a: self._on_fetch_metadata())
-        self.add_action(fetch_metadata)
-
-        new_playlist = Gio.SimpleAction.new("new-playlist", None)
-        new_playlist.connect("activate", lambda *_a: self._on_new_playlist())
-        self.add_action(new_playlist)
-
-        preferences = Gio.SimpleAction.new("preferences", None)
-        preferences.connect("activate", lambda *_a: self._on_preferences())
-        self.add_action(preferences)
-
-        play_pause = Gio.SimpleAction.new("play-pause", None)
-        play_pause.connect("activate", lambda *_a: self._toggle_play())
-        self.add_action(play_pause)
-
-        next_track = Gio.SimpleAction.new("next-track", None)
-        next_track.connect("activate", lambda *_a: self._advance())
-        self.add_action(next_track)
-
-        prev_track = Gio.SimpleAction.new("prev-track", None)
-        prev_track.connect("activate", lambda *_a: self._on_prev())
-        self.add_action(prev_track)
-
-        find = Gio.SimpleAction.new("find", None)
-        find.connect("activate", lambda *_a: self.search_toggle_btn.set_active(
-            not self.search_toggle_btn.get_active()))
-        self.add_action(find)
-
-        volume_up = Gio.SimpleAction.new("volume-up", None)
-        volume_up.connect("activate", lambda *_a: self._volume_step(0.05))
-        self.add_action(volume_up)
-
-        volume_down = Gio.SimpleAction.new("volume-down", None)
-        volume_down.connect("activate", lambda *_a: self._volume_step(-0.05))
-        self.add_action(volume_down)
-
-        mute = Gio.SimpleAction.new("mute", None)
-        mute.connect("activate", lambda *_a: self._toggle_mute())
-        self.add_action(mute)
-
-        for i, tab in enumerate(VIEW_NAMES, start=1):
-            act = Gio.SimpleAction.new(f"tab-{i}", None)
-            act.connect("activate", lambda *_a, t=tab: self._select_tab(t))
-            self.add_action(act)
-
-        app = self.get_application()
-        if app is not None:
-            # NOTE: space is deliberately NOT a global accelerator - a global
-            # accel fires even while typing in the search box (the entry never
-            # receives the key). Instead a BUBBLE-phase key controller below
-            # toggles play/pause only when no text field consumed the press.
-            app.set_accels_for_action("win.next-track", ["<primary>Right"])
-            app.set_accels_for_action("win.prev-track", ["<primary>Left"])
-            app.set_accels_for_action("win.find", ["<primary>f"])
-            app.set_accels_for_action("win.volume-up", ["<primary>Up"])
-            app.set_accels_for_action("win.volume-down", ["<primary>Down"])
-            app.set_accels_for_action("win.mute", ["<primary>m"])
-            for i in range(1, len(VIEW_NAMES) + 1):
-                app.set_accels_for_action(f"win.tab-{i}", [f"<primary>{i}"])
-
-        # Space toggles play/pause everywhere EXCEPT while typing in a text
-        # field. CAPTURE phase runs before the focused widget: buttons/cards
-        # never get to treat space as a click (Enter still activates them),
-        # and _on_space_pressed steps aside when the focus is editable text.
-        space_ctl = Gtk.EventControllerKey()
-        space_ctl.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-        space_ctl.connect("key-pressed", self._on_space_pressed)
-        self.add_controller(space_ctl)
-
-        sort_mode = Gio.SimpleAction.new_stateful(
-            "sort-mode", GLib.VariantType.new("s"),
-            GLib.Variant("s", self._sort["albums"]))
-        sort_mode.connect("activate", self._on_sort_mode)
-        self.add_action(sort_mode)
-
-        sleep_timer = Gio.SimpleAction.new_stateful(
-            "sleep-timer", GLib.VariantType.new("i"), GLib.Variant("i", 0))
-        sleep_timer.connect("activate", self._on_sleep_timer)
-        self.add_action(sleep_timer)
-
-        item_actions = Gio.SimpleActionGroup()
-        for name in ("play", "play-next", "play-last", "show-artist", "show-album",
-                     "set-image", "toggle-fav", "add-to-playlist", "add-to-new-playlist",
-                     "remove-from-playlist", "rename-playlist", "edit-meta",
-                     "edit-album", "rename-artist", "delete"):
-            act = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
-            act.connect("activate", self._on_item_action)
-            item_actions.add_action(act)
-        self.insert_action_group("item", item_actions)
-
-    # ---------- list/grid setup ----------
-
-    def _setup_lists(self):
-        self.artist_store = Gio.ListStore(item_type=Artist)
-        self.artist_grid.set_model(Gtk.SingleSelection(model=self.artist_store))
-        self.artist_grid.set_factory(self._factory(self._bind_artist_card))
-        self.artist_grid.set_single_click_activate(True)
-        self.artist_grid.connect(
-            "activate", lambda g, p: self._open_artist(g.get_model().get_item(p).id)
-        )
-
-        self.album_store = Gio.ListStore(item_type=Album)
-        self.album_grid.set_model(Gtk.SingleSelection(model=self.album_store))
-        self.album_grid.set_factory(self._factory(self._bind_album_card))
-        self.album_grid.set_single_click_activate(True)
-        self.album_grid.connect(
-            "activate", lambda g, p: self._open_album(g.get_model().get_item(p).id)
-        )
-
-        self.track_store = Gio.ListStore(item_type=Track)
-        self.track_list.set_model(Gtk.NoSelection(model=self.track_store))
-        self.track_list.set_factory(self._factory(self._bind_track_row))
-        self.track_list.connect("activate", self._on_track_activate)
-
-        self.fav_store = Gio.ListStore(item_type=Track)
-        self.fav_list.set_model(Gtk.NoSelection(model=self.fav_store))
-        self.fav_list.set_factory(self._factory(self._bind_fav_row))
-        self.fav_list.connect(
-            "activate", lambda _lv, pos: self._play_from(self._visible_favs, pos)
-        )
-
-        self.playlist_store = Gio.ListStore(item_type=Playlist)
-        self.playlist_grid.set_model(Gtk.SingleSelection(model=self.playlist_store))
-        self.playlist_grid.set_factory(self._factory(self._bind_playlist_card))
-        self.playlist_grid.set_single_click_activate(True)
-        self.playlist_grid.connect(
-            "activate", lambda g, p: self._open_playlist(g.get_model().get_item(p).id)
-        )
-
-    def _factory(self, bind_fn):
-        factory = Gtk.SignalListItemFactory()
-        factory.connect("setup", lambda _f, item: item.set_child(Gtk.Box()))
-        factory.connect("bind", lambda _f, item: bind_fn(item))
-        return factory
-
-    def _card_widget(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10, width_request=192,
-                       margin_top=8, margin_bottom=8, margin_start=8, margin_end=8)
-        box.set_cursor(POINTER_CURSOR)
-        box.add_css_class("card-box")
-        swatch = Swatch("", size=192)
-        swatch.add_css_class("card-swatch")
-
-        text_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        text_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
-        title = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, css_classes=["card-title"])
-        subtitle = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, css_classes=["mono-dim-sm"])
-        text_col.append(title)
-        text_col.append(subtitle)
-
-        # Three-dot menu button: hidden until the card is hovered, so it can't
-        # be clicked before appearing and it only steals text width on hover.
-        menu_btn = Gtk.Button(icon_name="lyre-more-symbolic", valign=Gtk.Align.CENTER,
-                              tooltip_text="More", css_classes=["flat", "card-menu-btn"])
-        menu_btn.set_visible(False)
-        menu_btn.set_cursor(POINTER_CURSOR)
-        text_row.append(text_col)
-        text_row.append(menu_btn)
-
-        box.append(swatch)
-        box.append(text_row)
-        box.swatch, box.title, box.subtitle, box.menu_btn = swatch, title, subtitle, menu_btn
-        box._menu_open = False
-
-        motion = Gtk.EventControllerMotion()
-        motion.connect("enter", lambda *_a: box.menu_btn.set_visible(True))
-        motion.connect("leave",
-                       lambda *_a: None if box._menu_open else box.menu_btn.set_visible(False))
-        box.add_controller(motion)
-        box._motion = motion
-
-        def on_menu_clicked(btn):
-            box._menu_open = True
-            popover = self._show_item_menu(box, btn, btn.get_width() / 2, btn.get_height())
-
-            def on_closed(_p):
-                box._menu_open = False
-                if not box._motion.get_contains_pointer():
-                    box.menu_btn.set_visible(False)
-
-            popover.connect("closed", on_closed)
-
-        menu_btn.connect("clicked", on_menu_clicked)
-        return box
-
-    def _bind_artist_card(self, item):
-        artist = item.get_item()
-        box = item.get_child()
-        if not hasattr(box, "swatch"):
-            box = self._card_widget()
-            item.set_child(box)
-        box.swatch.set_placeholder("artist photo")
-        box.swatch.set_path(artist.photo_path or None)
-        box.title.set_label(artist.name)
-        box.subtitle.set_label(f"{artist.album_count} albums · {artist.track_count} tracks")
-        self._attach_menu(box, "artist", artist.id, ARTIST_ENTRIES)
-
-    def _bind_album_card(self, item):
-        album = item.get_item()
-        box = item.get_child()
-        if not hasattr(box, "swatch"):
-            box = self._card_widget()
-            item.set_child(box)
-        box.swatch.set_placeholder("cover art")
-        box.swatch.set_path(album.cover_path or None)
-        box.title.set_label(album.title)
-        box.subtitle.set_label(album.artist)
-        # Album cards show the artist in the lavender accent (Browse-by-album
-        # mock); other card kinds keep the neutral dim subtitle.
-        box.subtitle.remove_css_class("mono-dim-sm")
-        box.subtitle.add_css_class("card-subtitle")
-        self._attach_menu(box, "album", album.id, ALBUM_ENTRIES)
-
-    def _bind_playlist_card(self, item):
-        playlist = item.get_item()
-        box = item.get_child()
-        if not hasattr(box, "swatch"):
-            box = self._card_widget()
-            item.set_child(box)
-        box.swatch.set_placeholder("playlist")
-        box.swatch.set_path(playlist.cover_path or None)
-        box.title.set_label(playlist.name)
-        box.subtitle.set_label(f"{playlist.track_count} tracks")
-        self._attach_menu(box, "playlist", playlist.id, PLAYLIST_ENTRIES)
-
-    def _track_row_widget(self):
-        row = Gtk.Box(spacing=14, margin_top=6, margin_bottom=6, margin_start=4, margin_end=4)
-        row.add_css_class("track-row")
-        index_lbl = Gtk.Label(width_chars=2, xalign=0, css_classes=["track-index"])
-        title_lbl = Gtk.Label(xalign=0, hexpand=True, ellipsize=Pango.EllipsizeMode.END,
-                               css_classes=["track-title"])
-        sub_lbl = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END, css_classes=["mono-dim-sm"])
-        text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
-        text_box.append(title_lbl)
-        text_box.append(sub_lbl)
-        album_lbl = Gtk.Label(xalign=0, ellipsize=Pango.EllipsizeMode.END,
-                               css_classes=["mono-dim", "track-album-link"],
-                               width_chars=14)
-        # Clicking the album name jumps to that album's detail page. A CAPTURE
-        # gesture claims the click so the surrounding row doesn't also start
-        # playback.
-        album_gesture = Gtk.GestureClick(button=1)
-        album_gesture.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
-
-        def on_album_clicked(gesture, _n, _x, _y, r=row):
-            if r._album_id:
-                gesture.set_state(Gtk.EventSequenceState.CLAIMED)
-                self._open_album(r._album_id)
-
-        album_gesture.connect("pressed", on_album_clicked)
-        album_lbl.add_controller(album_gesture)
-        album_lbl.set_cursor(POINTER_CURSOR)
-        duration_lbl = Gtk.Label(css_classes=["mono-dim"])
-        heart_btn = Gtk.Button(icon_name="lyre-heart-symbolic", valign=Gtk.Align.CENTER,
-                                tooltip_text="Favourite",
-                                css_classes=["flat", "heart-btn"])
-        heart_btn.connect("clicked", lambda _b, r=row: self._on_heart_clicked(r))
-        row.append(index_lbl)
-        row.append(text_box)
-        row.append(album_lbl)
-        row.append(duration_lbl)
-        row.append(heart_btn)
-        row.set_cursor(POINTER_CURSOR)
-        heart_btn.set_cursor(POINTER_CURSOR)
-        row.index_lbl, row.title_lbl, row.sub_lbl = index_lbl, title_lbl, sub_lbl
-        row.album_lbl, row.duration_lbl, row.heart_btn = album_lbl, duration_lbl, heart_btn
-        row._track_id = None
-        row._album_id = None
-        return row
-
-    def _on_heart_clicked(self, row):
-        if row._track_id is not None:
-            self._toggle_favorite(row._track_id)
-
-    def _toggle_favorite(self, track_id):
-        track = lib.get_track(self.con, track_id)
-        if track:
-            lib.set_favorite(self.con, track_id, not track["favorite"])
-            self._reload_all()
-            self._refresh_upnext()
-
-    def _fill_track_row(self, row, *, title, sub, album_text, duration, index, playing,
-                        track_id=None, fav=False, album_id=None):
-        row.index_lbl.set_label("♪" if playing else f"{index + 1:02d}")
-        row.title_lbl.set_label(title)
-        row.sub_lbl.set_label(sub)
-        row.duration_lbl.set_label(_fmt_time(duration))
-        row._track_id = track_id
-        row._album_id = album_id
-        row.heart_btn.set_icon_name("lyre-heart-filled-symbolic" if fav else "lyre-heart-symbolic")
-        if fav:
-            row.heart_btn.add_css_class("faved")
-        else:
-            row.heart_btn.remove_css_class("faved")
-        if album_text is None:
-            row.album_lbl.set_visible(False)
-        else:
-            row.album_lbl.set_visible(True)
-            row.album_lbl.set_label(album_text)
-        if playing:
-            row.index_lbl.add_css_class("playing")
-            row.title_lbl.add_css_class("playing")
-        else:
-            row.index_lbl.remove_css_class("playing")
-            row.title_lbl.remove_css_class("playing")
-
-    def _is_playing_track(self, track_id):
-        return (self.queue.current is not None
-                and track_id == self.queue.current.id
-                and self.player.is_playing())
-
-    def _bind_track_row(self, item):
-        self._bind_track_row_from(item, self._visible_tracks)
-
-    def _bind_fav_row(self, item):
-        self._bind_track_row_from(item, self._visible_favs)
-
-    def _bind_track_row_from(self, item, tracks):
-        t = item.get_item()
-        row = item.get_child()
-        if not hasattr(row, "title_lbl"):
-            row = self._track_row_widget()
-            item.set_child(row)
-        index = tracks.index(t) if t in tracks else 0
-        self._fill_track_row(row, title=t.title, sub=t.artist, album_text=t.album,
-                              duration=t.duration, index=index, playing=self._is_playing_track(t.id),
-                              track_id=t.id, fav=t.favorite, album_id=t.album_id)
-        self._attach_menu(row, "track", t.id, TRACK_ENTRIES)
-
-    # ---------- context menus ----------
-
-    def _attach_menu(self, widget, kind, item_id, entries, extra=None):
-        # Rows/cards get recycled by GridView/ListView, so bind() may be called
-        # many times on the same widget: only attach the gesture once, but keep
-        # its target (kind/id/entries) fresh via attributes read at click-time.
-        widget._menu_kind = kind
-        widget._menu_item_id = item_id
-        widget._menu_entries = entries
-        widget._menu_extra = extra or {}
-        if getattr(widget, "_lyre_menu_attached", False):
-            return
-        widget._lyre_menu_attached = True
-        gesture = Gtk.GestureClick(button=3)
-        gesture.connect("pressed",
-                        lambda _g, _n, x, y: self._show_item_menu(widget, widget, x, y))
-        widget.add_controller(gesture)
-
-    def _build_item_menu(self, widget):
-        """Build the context Gio.Menu from widget._menu_* attributes."""
-        def payload(**more):
-            data = {"kind": widget._menu_kind, "id": widget._menu_item_id}
-            data.update(widget._menu_extra)
-            data.update(more)
-            return GLib.Variant("s", json.dumps(data))
-
-        menu = Gio.Menu()
-        section = Gio.Menu()
-        for label, action in widget._menu_entries:
-            if label is None:
-                menu.append_section(None, section)
-                section = Gio.Menu()
-                continue
-            if action == "__playlists__":
-                sub = Gio.Menu()
-                for pl in lib.all_playlists(self.con):
-                    mi = Gio.MenuItem.new(pl["name"], None)
-                    mi.set_action_and_target_value("item.add-to-playlist", payload(pl=pl["id"]))
-                    sub.append_item(mi)
-                mi = Gio.MenuItem.new("New Playlist…", None)
-                mi.set_action_and_target_value("item.add-to-new-playlist", payload())
-                sub.append_item(mi)
-                section.append_submenu(label, sub)
-                continue
-            if action == "toggle-fav":
-                row = lib.get_track(self.con, widget._menu_item_id)
-                label = ("Remove from Favourites" if row and row["favorite"]
-                         else "Add to Favourites")
-            mi = Gio.MenuItem.new(label, None)
-            mi.set_action_and_target_value(f"item.{action}", payload())
-            section.append_item(mi)
-        menu.append_section(None, section)
-        return menu
-
-    def _show_item_menu(self, widget, anchor, x, y):
-        """Pop the context menu for `widget`, parented to `anchor` at (x, y).
-        Returns the popover so callers can react to its close."""
-        popover = Gtk.PopoverMenu.new_from_model(self._build_item_menu(widget))
-        popover.set_has_arrow(False)
-        popover.set_parent(anchor)
-        popover.set_pointing_to(Gdk.Rectangle(x=int(x), y=int(y), width=1, height=1))
-        # Unparent only AFTER the menu action has dispatched: GTK closes the
-        # popover first and resolves the clicked item's action afterwards, so
-        # unparenting directly in "closed" cuts the popover off from the
-        # window's action groups and the click silently does nothing.
-        popover.connect("closed", lambda p: GLib.idle_add(p.unparent))
-        popover.popup()
-        return popover
-
-    def _lookup_related(self, kind, item_id, field):
-        if kind == "track":
-            row = self.con.execute("SELECT artist_id, album_id FROM tracks WHERE id=?", (item_id,)).fetchone()
-        else:
-            row = self.con.execute("SELECT artist_id FROM albums WHERE id=?", (item_id,)).fetchone()
-        return row[field] if row else None
-
-    def _resolve_tracks(self, kind, item_id):
-        if kind == "track":
-            rows = [lib.get_track(self.con, item_id)]
-        elif kind == "album":
-            rows = lib.tracks_by_album(self.con, item_id)
-        elif kind == "playlist":
-            rows = lib.playlist_tracks(self.con, item_id)
-        else:
-            rows = lib.tracks_by_artist(self.con, item_id)
-        return [
-            Track(id=r["id"], path=r["path"], title=r["title"], artist=r["artist_name"],
-                  album=r["album_title"], album_id=r["album_id"], track_no=r["track_no"] or 0,
-                  duration=r["duration"] or 0.0)
-            for r in rows if r
-        ]
-
-    def _on_item_action(self, action, param):
-        data = json.loads(param.get_string())
-        kind, item_id, name = data["kind"], data["id"], action.get_name()
-
-        if name == "delete":
-            self._confirm_delete(kind, item_id)
-            return
-        if name == "show-artist":
-            artist_id = item_id if kind == "artist" else self._lookup_related(kind, item_id, "artist_id")
-            if artist_id:
-                # Artists no longer have a top-level tab; open the detail
-                # directly so Back returns to wherever the user came from.
-                self._open_artist(artist_id)
-            return
-        if name == "show-album":
-            album_id = item_id if kind == "album" else self._lookup_related(kind, item_id, "album_id")
-            if album_id:
-                self._select_tab("albums")
-                self._open_album(album_id)
-            return
-        if name == "set-image":
-            self._pick_image(kind, item_id)
-            return
-        if name == "toggle-fav":
-            row = lib.get_track(self.con, item_id)
-            if row:
-                lib.set_favorite(self.con, item_id, not row["favorite"])
-                self._reload_all()
-            return
-        if name == "add-to-playlist":
-            lib.add_to_playlist(self.con, data["pl"], [item_id])
-            playlist = lib.get_playlist(self.con, data["pl"])
-            self._toast(f'Added to "{playlist["name"]}"' if playlist else "Added to playlist")
-            self._reload_all()
-            return
-        if name == "add-to-new-playlist":
-            self._prompt_name(
-                "New Playlist", "",
-                lambda text: (lib.add_to_playlist(self.con, lib.create_playlist(self.con, text),
-                                                  [item_id]),
-                              self._toast(f'Added to "{text}"'),
-                              self._reload_all()),
-            )
-            return
-        if name == "remove-from-playlist":
-            lib.remove_from_playlist(self.con, data["pl"], item_id)
-            self._reload_all()
-            return
-        if name == "edit-meta":
-            self._edit_metadata(item_id)
-            return
-        if name == "edit-album":
-            self._edit_album(item_id)
-            return
-        if name == "rename-artist":
-            self._rename_artist(item_id)
-            return
-        if name == "rename-playlist":
-            playlist = lib.get_playlist(self.con, item_id)
-            if playlist:
-                self._prompt_name(
-                    "Rename Playlist", playlist["name"],
-                    lambda text: (lib.rename_playlist(self.con, item_id, text),
-                                  self._reload_all()),
-                )
-            return
-
-        tracks = self._resolve_tracks(kind, item_id)
-        if name == "play":
-            self.queue.play(tracks)
-            self._start_current()
-        elif name == "play-next":
-            self.queue.play_next(tracks)
-        elif name == "play-last":
-            self.queue.play_last(tracks)
-        self._refresh_upnext()
-
-    def _pick_image(self, kind, item_id):
-        """Let the user pick a local image as the artist photo / album cover."""
-        image_filter = Gtk.FileFilter()
-        image_filter.set_name("Images")
-        image_filter.add_mime_type("image/png")
-        image_filter.add_mime_type("image/jpeg")
-        image_filter.add_mime_type("image/webp")
-        filters = Gio.ListStore(item_type=Gtk.FileFilter)
-        filters.append(image_filter)
-        dialog = Gtk.FileDialog(default_filter=image_filter, filters=filters)
-        dialog.open(self, None, lambda d, res: self._image_chosen(d, res, kind, item_id))
-
-    def _image_chosen(self, dialog, result, kind, item_id):
+    def _toast(self, text, timeout=None):
+        toast = Adw.Toast.new(text)
+        if timeout is not None:
+            toast.set_timeout(timeout)
+        self.toast_overlay.add_toast(toast)
+        return toast
+
+    def _launch_status(self, text, timeout=3):
+        """One toast for launch progress, replaced in place (toasts otherwise
+        queue, so an error would only show after 'Starting…' timed out)."""
+        old = getattr(self, "_launch_toast", None)
+        if old is not None:
+            old.dismiss()
+        self._launch_toast = self._toast(text, timeout)
+
+    def _on_add_folder(self):
+        dialog = Gtk.FileDialog(title="Add ROM Folder")
+        dialog.select_folder(self, None, self._folder_chosen)
+
+    def _folder_chosen(self, dialog, result):
         try:
-            gfile = dialog.open_finish(result)
+            folder = dialog.select_folder_finish(result)
         except GLib.Error:
             return
-        if not gfile:
+        path = folder.get_path() if folder else None
+        if not path:
             return
-        src = gfile.get_path()
-        if not src:
-            return
-        ext = Path(src).suffix.lower() or ".png"
-        if kind == "artist":
-            dest = lib.PHOTOS_DIR / f"custom-{item_id}{ext}"
-            shutil.copyfile(src, dest)
-            lib.set_artist_photo(self.con, item_id, str(dest))
-        else:
-            dest = lib.COVERS_DIR / f"custom-{item_id}{ext}"
-            shutil.copyfile(src, dest)
-            lib.set_album_cover(self.con, item_id, str(dest))
-        self._reload_all()
-        if self.queue.current and self._player_art is not None:
-            album = lib.get_album(self.con, self.queue.current.album_id)
-            self._player_art.set_path((album["cover_path"] if album else None) or None)
+        self._add_folders([path])
 
-    def _confirm_delete(self, kind, item_id):
-        if kind == "playlist":
-            heading = "Delete playlist?"
-            body = "This deletes the playlist. Tracks stay in your library."
-        else:
-            heading = "Remove from library?"
-            body = "This only removes it from your library. Files on disk are not touched."
-        dialog = Adw.AlertDialog(heading=heading, body=body)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("remove", "Remove")
-        dialog.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
-        dialog.connect("response", lambda d, r: self._do_delete(kind, item_id) if r == "remove" else None)
-        dialog.present(self)
+    def _add_folders(self, paths):
+        for path in paths:
+            lib.add_folder(self.con, path)
 
-    def _do_delete(self, kind, item_id):
-        {"track": lib.delete_track, "album": lib.delete_album, "artist": lib.delete_artist,
-         "playlist": lib.delete_playlist}[kind](self.con, item_id)
-        if self.view == "detail" and (
-            (kind == "artist" and self._detail_mode == "artist" and self._detail_artist_id == item_id)
-            or (kind == "album" and self._detail_mode == "album" and self._detail_album_id == item_id)
-            or (kind == "playlist" and self._detail_mode == "playlist" and self._detail_playlist_id == item_id)
-        ):
-            self._go_back()
-        self._reload_all()
+        def scan(progress):
+            return sum(lib.scan_folder(self.con, p, progress) for p in paths)
 
-    def _prompt_name(self, heading, initial, on_accept):
-        """Small name-entry dialog used for creating/renaming playlists."""
-        entry = Gtk.Entry(text=initial, activates_default=True, margin_top=6)
-        dialog = Adw.AlertDialog(heading=heading, extra_child=entry)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("accept", "Save")
-        dialog.set_response_appearance("accept", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("accept")
+        self._run_scan(scan, "Looking for games…", refresh_watchers=True)
 
-        def on_response(_d, response):
-            text = entry.get_text().strip()
-            if response == "accept" and text:
-                on_accept(text)
+    def _on_rescan(self):
+        self._run_scan(lambda cb: lib.scan_all(self.con, cb), "Rescanning library…")
 
-        dialog.connect("response", on_response)
-        dialog.present(self)
-        entry.grab_focus()
+    def _run_scan(self, scan_fn, start_msg, refresh_watchers=False):
+        """Scan on a worker thread behind one live progress toast."""
+        toast = Adw.Toast.new(start_msg)
+        toast.set_timeout(0)
+        self.toast_overlay.add_toast(toast)
+        state = {"last": 0.0}
 
-    def _edit_metadata(self, track_id):
-        """Edit a track's tags: written to the file itself, then rescanned."""
-        row = lib.get_track(self.con, track_id)
-        if not row:
-            return
-        fields = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE,
-                             css_classes=["boxed-list"], margin_top=8)
-        title_row = Adw.EntryRow(title="Title", text=row["title"] or "")
-        artist_row = Adw.EntryRow(title="Artist", text=row["artist_name"] or "")
-        album_row = Adw.EntryRow(title="Album", text=row["album_title"] or "")
-        no_row = Adw.EntryRow(title="Track number",
-                              text=str(row["track_no"] or ""))
-        for r in (title_row, artist_row, album_row, no_row):
-            fields.append(r)
-
-        dialog = Adw.AlertDialog(heading="Edit Metadata",
-                                 body=Path(row["path"]).name,
-                                 extra_child=fields)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("save", "Save")
-        dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("save")
-
-        def on_response(_d, response):
-            if response != "save":
+        def progress(done, total):
+            now = time.monotonic()
+            if not total or (done < total and now - state["last"] < 0.1):
                 return
-            try:
-                track_no = int(no_row.get_text().strip() or 0)
-            except ValueError:
-                track_no = 0
-            try:
-                lib.write_tags(row["path"],
-                               title=title_row.get_text().strip() or row["title"],
-                               artist=artist_row.get_text().strip() or row["artist_name"],
-                               album=album_row.get_text().strip() or row["album_title"],
-                               track_no=track_no)
-            except Exception as e:
-                self._toast(f"Couldn't write tags: {e}")
-                return
-            lib.scan_file(self.con, row["path"])
-            lib.prune_orphans(self.con)
-            self._reload_all()
-            self._toast("Metadata saved")
+            state["last"] = now
+            GLib.idle_add(lambda: toast.set_title(f"Scanning… {done:,} of {total:,} files") or False)
 
-        dialog.connect("response", on_response)
-        dialog.present(self)
+        def work():
+            try:
+                scan_fn(progress)
+            finally:
+                GLib.idle_add(finish)
 
-    def _edit_album(self, album_id):
-        """Rename an album / set its year: written into every file's tags."""
-        album = lib.get_album(self.con, album_id)
-        if not album:
+        def finish():
+            toast.dismiss()
+            self._reload()
+            if refresh_watchers:
+                self._refresh_watchers()
+            n = len(self._games)
+            self._toast(f"Library updated — {n:,} game{'s' if n != 1 else ''}")
+            self._start_cover_worker()
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    # --------------------------------------------------------- side panel --
+
+    def _setup_info_panel(self):
+        self._info_cover = Cover(self.PANEL_WIDTH)
+        self._info_cover.add_css_class("info-preview")
+        self.info_preview_slot.append(self._info_cover)
+        self.info_close_btn.connect("clicked", lambda *_: self._close_info())
+        self.info_play_btn.connect("clicked", lambda *_: self._play(self._selected_id))
+        self.info_fav_btn.connect("clicked", lambda *_: self._toggle_fav(self._selected_id))
+
+    def _more_menu(self, row):
+        menu = Gio.Menu()
+        cover = Gio.Menu()
+        cover.append("Set Cover Image…", "win.set-cover")
+        if row["cover_source"] == "user":
+            cover.append("Use Original Cover", "win.reset-cover")
+        elif row["cover_source"] not in ("sidecar",):
+            cover.append("Find Cover Online", "win.fetch-cover")
+        menu.append_section(None, cover)
+        files = Gio.Menu()
+        files.append("Show in Files", "win.show-in-files")
+        files.append("Copy Path", "win.copy-path")
+        menu.append_section(None, files)
+        return menu
+
+    def _select(self, game_id):
+        previous = self._selected_id
+        self._selected_id = game_id
+        self._mark_selected(previous, game_id)
+        self._show_info(game_id)
+
+    def _mark_selected(self, old_id, new_id):
+        child = self.game_grid.get_first_child()
+        while child:
+            box = child.get_first_child()
+            gid = getattr(box, "game_id", None)
+            if gid is not None:
+                if gid == new_id:
+                    box.add_css_class("tile-selected")
+                elif gid == old_id:
+                    box.remove_css_class("tile-selected")
+            child = child.get_next_sibling()
+
+    def _show_info(self, game_id):
+        row = lib.get_game(self.con, game_id)
+        game = self._by_id.get(game_id)
+        if row is None or game is None:
             return
-        fields = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE,
-                             css_classes=["boxed-list"], margin_top=8)
-        title_row = Adw.EntryRow(title="Title", text=album["title"] or "")
-        year_row = Adw.EntryRow(title="Year", text=str(album["year"] or ""))
-        fields.append(title_row)
-        fields.append(year_row)
+        platform = platforms.get(row["platform"])
+        self._info_cover.set_size(self.PANEL_WIDTH)
+        self._info_cover.set_game(row["title"], row["cover_path"])
+        self.info_title.set_label(row["title"])
+        self.info_subtitle.set_label((platform.name if platform else row["platform"]).upper())
+        self._update_info_fav(game.favorite)
+        self.info_more_btn.set_menu_model(self._more_menu(row))
 
-        dialog = Adw.AlertDialog(heading="Edit Album",
-                                 body=f"Tags are updated in every file of “{album['title']}”.",
-                                 extra_child=fields)
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("save", "Save")
-        dialog.set_response_appearance("save", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("save")
+        box = self.info_rows_box
+        child = box.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            box.remove(child)
+            child = nxt
 
-        def on_response(_d, response):
-            if response != "save":
-                return
-            title = title_row.get_text().strip() or album["title"]
-            try:
-                year = int(year_row.get_text().strip() or 0) or None
-            except ValueError:
-                year = None
-            self._toast("Updating album…")
+        box.append(self._info_row("Emulator", self._emulator_label(row["platform"]),
+                                  on_click=self._on_preferences))
+        box.append(self._info_divider())
+        box.append(self._info_row("Region", row["region"] or "—"))
+        serial_key = "Game code" if row["platform"] == "gba" else "Serial"
+        box.append(self._info_row(serial_key, row["serial"] or "—"))
+        if row["internal_title"] and row["internal_title"].lower() != row["title"].lower():
+            box.append(self._info_row("Internal title", row["internal_title"]))
+        box.append(self._info_row("Format", row["format"] or "—"))
+        box.append(self._info_row("Size", _fmt_size(row["size"])))
+        box.append(self._info_divider())
+        box.append(self._info_row("Last played", _fmt_when(row["last_played"])))
+        box.append(self._info_row("Play time", _fmt_duration(row["play_seconds"] or 0)))
+        box.append(self._info_row("Added", _fmt_when(row["added_at"])))
+        box.append(self._info_divider())
+        box.append(self._info_row("File name", os.path.basename(row["path"])))
+        path = row["path"]
+        box.append(self._info_row("Path", path,
+                                  on_click=lambda p=path: self._open_in_files(p)))
 
-            def work():
-                failed = lib.retag_album(self.con, album_id, title=title, year=year)
-                GLib.idle_add(self._reload_all)
-                message = ("Album updated" if not failed
-                           else f"Couldn't write {len(failed)} file(s)")
-                GLib.idle_add(lambda: self._toast(message) and False)
+        if not self.info_revealer.get_reveal_child():
+            self.info_revealer.set_visible(True)
+            self.info_revealer.set_reveal_child(True)
+            self._apply_layout_metrics()
 
-            threading.Thread(target=work, daemon=True).start()
-
-        dialog.connect("response", on_response)
-        dialog.present(self)
-
-    def _rename_artist(self, artist_id):
-        artist = lib.get_artist(self.con, artist_id)
-        if not artist:
-            return
-
-        def on_accept(text):
-            self._toast("Renaming artist…")
-
-            def work():
-                failed = lib.rename_artist(self.con, artist_id, text)
-                GLib.idle_add(self._reload_all)
-                message = ("Artist renamed" if not failed
-                           else f"Couldn't write {len(failed)} file(s)")
-                GLib.idle_add(lambda: self._toast(message) and False)
-
-            threading.Thread(target=work, daemon=True).start()
-
-        self._prompt_name("Rename Artist", artist["name"], on_accept)
-
-    # ---------- sleep timer ----------
-
-    def _on_sleep_timer(self, action, param):
-        minutes = param.get_int32()
-        action.set_state(param)
-        if self._sleep_source:
-            GLib.source_remove(self._sleep_source)
-            self._sleep_source = None
-        if minutes > 0:
-            self._sleep_source = GLib.timeout_add_seconds(
-                minutes * 60, self._sleep_timer_fire)
-            self._toast(f"Sleep timer — pausing in {minutes} minutes")
+    def _update_info_fav(self, faved):
+        self.info_fav_btn.set_icon_name(
+            "dice-heart-filled-symbolic" if faved else "dice-heart-symbolic")
+        self.info_fav_btn.set_tooltip_text(
+            "Remove from Favourites" if faved else "Add to Favourites")
+        if faved:
+            self.info_fav_btn.add_css_class("faved")
         else:
-            self._toast("Sleep timer off")
+            self.info_fav_btn.remove_css_class("faved")
 
-    def _sleep_timer_fire(self):
-        self._sleep_source = None
-        action = self.lookup_action("sleep-timer")
-        if action:
-            action.set_state(GLib.Variant("i", 0))
-        if self.player.is_playing():
-            self._toggle_play()
-            self._toast("Sleep timer — playback paused")
+    def _close_info(self):
+        old = self._selected_id
+        self._selected_id = None
+        self._mark_selected(old, None)
+        self.info_revealer.set_reveal_child(False)
+        self._apply_layout_metrics()
+
+    def _info_row(self, key, value, on_click=None):
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=SPACE_S)
+        k = Gtk.Label(label=key, xalign=0, css_classes=["info-key"])
+        v = Gtk.Label(label=value, xalign=1, hexpand=True, max_width_chars=1,
+                      ellipsize=Pango.EllipsizeMode.START if key == "Path" else Pango.EllipsizeMode.END,
+                      css_classes=["info-value"])
+        v.set_has_tooltip(True)
+        v.connect("query-tooltip", self._on_label_tooltip)
+        if on_click is not None:
+            v.add_css_class("info-link")
+            v.set_cursor(POINTER_CURSOR)
+            gesture = Gtk.GestureClick()
+            gesture.connect("released", lambda *_a: on_click())
+            v.add_controller(gesture)
+        else:
+            v.set_selectable(True)
+        row.append(k)
+        row.append(v)
+        return row
+
+    @staticmethod
+    def _on_label_tooltip(label, _x, _y, _keyboard, tooltip):
+        layout = label.get_layout()
+        if layout is not None and layout.is_ellipsized():
+            tooltip.set_text(label.get_text())
+            return True
         return False
 
-    def _on_new_playlist(self):
-        self._prompt_name(
-            "New Playlist", "",
-            lambda text: (lib.create_playlist(self.con, text),
-                          self._select_tab("playlists"),
-                          self._reload_all()),
-        )
+    @staticmethod
+    def _info_divider():
+        return Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL,
+                             css_classes=["info-divider"])
 
-    # ---------- preferences / folder watching ----------
+    # ---------------------------------------------------- game actions --
 
-    def _on_preferences(self):
+    def _toggle_fav(self, game_id):
+        game = self._by_id.get(game_id)
+        if game is None:
+            return
+        game.favorite = not game.favorite
+        lib.set_favorite(self.con, game_id, game.favorite)
+        if game_id == self._selected_id:
+            self._update_info_fav(game.favorite)
+        if self._tab == "favourites":
+            self._apply_filters()
+
+    def _open_in_files(self, path):
+        try:
+            launcher = Gtk.FileLauncher.new(Gio.File.new_for_path(path))
+            launcher.open_containing_folder(self, None, None)
+        except Exception:
+            pass
+
+    def _show_in_files(self, game_id):
+        game = self._by_id.get(game_id)
+        if game is not None:
+            self._open_in_files(game.path)
+
+    def _copy_path(self, game_id):
+        game = self._by_id.get(game_id)
+        if game is not None:
+            self.get_clipboard().set(game.path)
+            self._toast("Path copied")
+
+    def _pick_cover(self, game_id):
+        if game_id is None:
+            return
+        filters = Gio.ListStore(item_type=Gtk.FileFilter)
+        images = Gtk.FileFilter(name="Images")
+        images.add_mime_type("image/png")
+        images.add_mime_type("image/jpeg")
+        images.add_mime_type("image/webp")
+        filters.append(images)
+        dialog = Gtk.FileDialog(title="Choose Cover Image", filters=filters)
+
+        def done(dlg, result):
+            try:
+                file = dlg.open_finish(result)
+            except GLib.Error:
+                return
+            if file is None or not file.get_path():
+                return
+            try:
+                path = lib.set_user_cover(self.con, game_id, file.get_path())
+            except OSError as exc:
+                self._toast(f"Couldn't use that image: {exc.strerror}")
+                return
+            self._set_game_cover(game_id, path)
+
+        dialog.open(self, None, done)
+
+    def _reset_cover(self, game_id):
+        lib.clear_user_cover(self.con, game_id)
+        row = lib.get_game(self.con, game_id)
+        self._set_game_cover(game_id, row["cover_path"] if row else "")
+        if row is not None and not row["cover_path"]:
+            self._start_cover_worker()
+
+    def _set_game_cover(self, game_id, path):
+        game = self._by_id.get(game_id)
+        if game is None:
+            return
+        forget_thumbnail(path or "")
+        game.cover_path = path or ""
+        if game_id == self._selected_id:
+            self._show_info(game_id)
+
+    def _fetch_cover_now(self, game_id):
+        game = self._by_id.get(game_id)
+        if game is None:
+            return
+        self._toast("Looking for cover art…")
+
+        def work():
+            data = covers.fetch(game.platform, game.path)
+            con = lib.connect()
+            path = lib.set_online_cover(con, game_id, data) if data else None
+            if not data:
+                lib.mark_cover_checked(con, game_id)
+            con.close()
+            GLib.idle_add(done, path)
+
+        def done(path):
+            if path:
+                self._set_game_cover(game_id, path)
+                self._toast("Cover found")
+            else:
+                self._toast("No cover found online — try Set Cover Image…")
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    # ---------------------------------------------------------- covers --
+
+    def _start_cover_worker(self):
+        """Fill in missing covers from the libretro archive in the background,
+        one game at a time, so they pop into the grid as they arrive."""
+        if not self.settings.get_boolean("fetch-covers"):
+            return
+        if self._cover_worker is not None and self._cover_worker.is_alive():
+            return
+
+        def work():
+            con = lib.connect()
+            try:
+                for row in lib.games_needing_covers(con):
+                    if not self.settings.get_boolean("fetch-covers"):
+                        break
+                    data = covers.fetch(row["platform"], row["path"])
+                    if data:
+                        path = lib.set_online_cover(con, row["id"], data)
+                        if path:
+                            GLib.idle_add(self._set_game_cover, row["id"], path)
+                    else:
+                        lib.mark_cover_checked(con, row["id"])
+            finally:
+                con.close()
+
+        self._cover_worker = threading.Thread(target=work, daemon=True)
+        self._cover_worker.start()
+
+    # ------------------------------------------------------------ playing --
+
+    def _detect_emulators(self):
+        def work():
+            found = {p.key: emulators.detect(p.key) for p in platforms.PLATFORMS}
+            GLib.idle_add(done, found)
+
+        def done(found):
+            self._detected = found
+            if self._selected_id is not None:
+                self._show_info(self._selected_id)
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _custom_commands(self):
+        return dict(self.settings.get_value("emulators").unpack())
+
+    def _command_for(self, platform_key):
+        custom = self._custom_commands().get(platform_key, "").strip()
+        if custom:
+            return custom
+        emulator = self._detected.get(platform_key)
+        return emulator.command if emulator else None
+
+    def _emulator_label(self, platform_key):
+        custom = self._custom_commands().get(platform_key, "").strip()
+        if custom:
+            return "Custom command"
+        emulator = self._detected.get(platform_key)
+        if emulator is not None:
+            return emulator.name + (" (Flatpak)" if emulator.kind == "flatpak" else "")
+        if platform_key not in self._detected:
+            return "Detecting…"
+        return "Not found — set one up"
+
+    def _play(self, game_id):
+        game = self._by_id.get(game_id)
+        if game is None:
+            return
+        command = self._command_for(game.platform)
+        if not command:
+            self._no_emulator(game.platform)
+            return
+        argv = emulators.build_argv(command, game.path)
+        if not argv:
+            self._no_emulator(game.platform)
+            return
+        try:
+            proc = Gio.Subprocess.new(emulators.host_argv(argv),
+                                      Gio.SubprocessFlags.STDOUT_SILENCE
+                                      | Gio.SubprocessFlags.STDERR_PIPE)
+        except GLib.Error as exc:
+            self._launch_status(f"Couldn't start {argv[0]}: {exc.message}", 6)
+            return
+        started = time.time()
+        self._running[game_id] = started
+        lib.record_launch(self.con, game_id)
+        game.last_played = started
+        self._launch_status(f"Starting {game.title}…")
+        if game_id == self._selected_id:
+            self._show_info(game_id)
+        proc.communicate_utf8_async(None, None, self._on_emulator_exit, (game_id, started))
+
+    def _on_emulator_exit(self, proc, result, data):
+        game_id, started = data
+        self._running.pop(game_id, None)
+        try:
+            _ok, _out, err = proc.communicate_utf8_finish(result)
+        except GLib.Error:
+            err = ""
+        elapsed = time.time() - started
+        failed = proc.get_if_exited() and proc.get_exit_status() != 0
+        if failed and elapsed < 5:
+            last = (err or "").strip().splitlines()[-1:] or ["exit status "
+                                                             f"{proc.get_exit_status()}"]
+            self._launch_status(f"The emulator quit right away: {last[0][:120]}", 8)
+        elif elapsed >= 30:
+            lib.add_play_time(self.con, game_id, elapsed)
+        if game_id == self._selected_id:
+            self._show_info(game_id)
+
+    def _no_emulator(self, platform_key):
+        platform = platforms.get(platform_key)
+        names = ", ".join(sorted({e.name for e in platform.emulators})) if platform else ""
+        dialog = Adw.AlertDialog(
+            heading=f"No {platform.label if platform else ''} emulator found",
+            body=(f"Dice launches your games in an emulator installed on this "
+                  f"computer. Install {names or 'one'} (Flathub has it), or set the "
+                  f"command to use in Preferences."))
+        dialog.add_response("close", "Close")
+        dialog.add_response("prefs", "Open Preferences")
+        dialog.set_response_appearance("prefs", Adw.ResponseAppearance.SUGGESTED)
+        dialog.connect("response", lambda _d, r: self._on_preferences() if r == "prefs" else None)
+        dialog.present(self)
+
+    # --------------------------------------------------------- preferences --
+
+    def _on_preferences(self, *_args):
         dialog = Adw.PreferencesDialog(title="Preferences")
         page = Adw.PreferencesPage()
 
@@ -1222,69 +1058,86 @@ class MusicWindow(Adw.ApplicationWindow):
         current = self.settings.get_string("theme")
         theme_row.set_selected(themes.index(current) if current in themes else 2)
 
-        def on_theme_selected(row, _pspec):
+        def on_theme(row, _pspec):
             theme = themes[row.get_selected()]
             self.settings.set_string("theme", theme)
             self._apply_theme(theme)
 
-        theme_row.connect("notify::selected", on_theme_selected)
+        theme_row.connect("notify::selected", on_theme)
         appearance.add(theme_row)
         page.add(appearance)
 
-        folders = Adw.PreferencesGroup(
-            title="Music Folders",
-            description="Folders Lyre scans for music",
-        )
-        for row in lib.all_folders(self.con):
-            path = row["path"]
-            folder_row = Adw.ActionRow(title=path, title_lines=1)
-            remove_btn = Gtk.Button(icon_name="user-trash-symbolic",
-                                     valign=Gtk.Align.CENTER,
-                                     tooltip_text="Remove folder from library",
-                                     css_classes=["flat"])
+        emus = Adw.PreferencesGroup(
+            title="Emulators",
+            description="Leave a command empty to use the emulator Dice finds "
+                        "installed. {rom} is replaced by the game's path.")
+        custom = self._custom_commands()
+        for platform in platforms.PLATFORMS:
+            detected = self._detected.get(platform.key)
+            row = Adw.EntryRow(title=f"{platform.name}")
+            row.set_text(custom.get(platform.key, ""))
+            hint = detected.command if detected else "no emulator found"
+            row.set_tooltip_text(f"Detected: {hint}")
+            row.set_show_apply_button(True)
+            row.connect("apply", self._on_emulator_apply, platform.key)
+            status = Gtk.Label(label=(detected.name if detected else "Not found"),
+                               valign=Gtk.Align.CENTER, css_classes=["dim-label", "caption"])
+            row.add_suffix(status)
+            emus.add(row)
+        page.add(emus)
+
+        folders = Adw.PreferencesGroup(title="ROM Folders",
+                                       description="Folders Dice scans for games")
+        for path in lib.all_folders(self.con):
+            folder_row = Adw.ActionRow(title=GLib.markup_escape_text(path), title_lines=1)
+            remove_btn = Gtk.Button(icon_name="list-remove-symbolic", valign=Gtk.Align.CENTER,
+                                    tooltip_text="Remove this folder from Dice",
+                                    css_classes=["flat"])
             remove_btn.connect("clicked",
                                lambda _b, p=path, d=dialog: self._confirm_remove_folder(p, d))
             folder_row.add_suffix(remove_btn)
             folders.add(folder_row)
-        add_row = Adw.ActionRow(title="Add Music Folder…", activatable=True)
+        add_row = Adw.ActionRow(title="Add ROM Folder…", activatable=True)
         add_row.add_prefix(Gtk.Image.new_from_icon_name("list-add-symbolic"))
         add_row.connect("activated", lambda *_: (dialog.close(), self._on_add_folder()))
         folders.add(add_row)
         watch_row = Adw.SwitchRow(
-            title="Watch music folders",
-            subtitle="Rescan automatically when files in your music folders change",
-        )
-        self.settings.bind("watch-folders", watch_row, "active",
-                           Gio.SettingsBindFlags.DEFAULT)
+            title="Watch ROM folders",
+            subtitle="Rescan automatically when files in your ROM folders change")
+        self.settings.bind("watch-folders", watch_row, "active", Gio.SettingsBindFlags.DEFAULT)
         folders.add(watch_row)
         page.add(folders)
 
-        playback = Adw.PreferencesGroup(title="Playback")
-        notify_row = Adw.SwitchRow(
-            title="Track change notifications",
-            subtitle="Show a notification when the track changes and Lyre is in the background",
-        )
-        self.settings.bind("notify-on-track-change", notify_row, "active",
-                           Gio.SettingsBindFlags.DEFAULT)
-        playback.add(notify_row)
-        page.add(playback)
-
-        danger = Adw.PreferencesGroup(title="Reset")
-        delete_row = Adw.ActionRow(title="Delete Library…", activatable=True)
-        delete_row.add_css_class("error")
-        delete_row.connect("activated", lambda *_: self._confirm_wipe_library(dialog))
-        danger.add(delete_row)
-        page.add(danger)
+        art = Adw.PreferencesGroup(
+            title="Cover Art",
+            description="Dice uses images named like the ROM (next to it or in a "
+                        "covers folder) and art inside PSP discs first.")
+        fetch_row = Adw.SwitchRow(
+            title="Download missing covers",
+            subtitle="Look up box art by file name in the libretro thumbnail archive")
+        self.settings.bind("fetch-covers", fetch_row, "active", Gio.SettingsBindFlags.DEFAULT)
+        art.add(fetch_row)
+        page.add(art)
 
         dialog.add(page)
         dialog.present(self)
 
+    def _on_emulator_apply(self, row, platform_key):
+        custom = self._custom_commands()
+        text = row.get_text().strip()
+        if text:
+            custom[platform_key] = text
+        else:
+            custom.pop(platform_key, None)
+        self.settings.set_value("emulators", GLib.Variant("a{ss}", custom))
+        if self._selected_id is not None:
+            self._show_info(self._selected_id)
+
     def _confirm_remove_folder(self, path, prefs_dialog):
         confirm = Adw.AlertDialog(
             heading="Remove folder?",
-            body=f"Tracks from “{path}” will be removed from your library. "
-                 "Files on disk are not touched.",
-        )
+            body=f"Dice will stop showing games from “{path}” and forget their "
+                 "favourites and play history. Nothing on disk is touched.")
         confirm.add_response("cancel", "Cancel")
         confirm.add_response("remove", "Remove")
         confirm.set_response_appearance("remove", Adw.ResponseAppearance.DESTRUCTIVE)
@@ -1293,7 +1146,7 @@ class MusicWindow(Adw.ApplicationWindow):
             if response != "remove":
                 return
             lib.remove_folder(self.con, path)
-            self._reload_all()
+            self._reload()
             self._refresh_watchers()
             self._toast("Folder removed")
             prefs_dialog.close()
@@ -1301,54 +1154,24 @@ class MusicWindow(Adw.ApplicationWindow):
         confirm.connect("response", on_response)
         confirm.present(self)
 
-    def _confirm_wipe_library(self, prefs_dialog):
-        confirm = Adw.AlertDialog(
-            heading="Delete entire library?",
-            body="All artists, albums, tracks, favourites, playlists and play "
-                 "history will be erased. Your music files on disk are not touched.",
-        )
-        confirm.add_response("cancel", "Cancel")
-        confirm.add_response("delete", "Delete Library")
-        confirm.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
-
-        def on_response(_d, response):
-            if response != "delete":
-                return
-            lib.wipe_library(self.con)
-            self.queue.current = None
-            self.queue.upcoming.clear()
-            self.queue.history.clear()
-            self.queue.invalidate_peek()
-            self.player.stop()
-            self._set_play_icon("lyre-play-symbolic")
-            self._update_inhibit(False)
-            self._apply_player_visibility()
-            self._reload_all()
-            self._refresh_watchers()
-            self._toast("Library deleted")
-            prefs_dialog.close()
-
-        confirm.connect("response", on_response)
-        confirm.present(self)
+    # -------------------------------------------------- watching / drops --
 
     def _setup_watching(self):
-        self._monitors = []
-        self._watch_debounce = 0
         self.settings.connect("changed::watch-folders", lambda *_: self._refresh_watchers())
+        self.settings.connect("changed::fetch-covers", lambda *_: self._start_cover_worker())
         self._refresh_watchers()
 
     def _refresh_watchers(self):
-        """(Re)create directory monitors for every folder in the library.
-        Gio monitors aren't recursive, so walk the tree (capped for sanity)."""
         for monitor in self._monitors:
             monitor.cancel()
         self._monitors = []
         if not self.settings.get_boolean("watch-folders"):
             return
         count = 0
-        for row in self.con.execute("SELECT path FROM folders").fetchall():
-            for dirpath, _dirs, _files in os.walk(row["path"]):
-                if count >= 512:
+        for root in lib.all_folders(self.con):
+            for dirpath, dirnames, _files in os.walk(root):
+                dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+                if count >= 256:
                     return
                 try:
                     monitor = Gio.File.new_for_path(dirpath).monitor_directory(
@@ -1360,7 +1183,6 @@ class MusicWindow(Adw.ApplicationWindow):
                 count += 1
 
     def _on_folder_event(self, *_args):
-        # Debounce: file copies fire many events; rescan once things settle.
         if self._watch_debounce:
             GLib.source_remove(self._watch_debounce)
         self._watch_debounce = GLib.timeout_add_seconds(3, self._watch_rescan)
@@ -1370,780 +1192,26 @@ class MusicWindow(Adw.ApplicationWindow):
 
         def work():
             lib.scan_all(self.con)
-            GLib.idle_add(self._reload_all)
-            GLib.idle_add(self._refresh_watchers)
-            GLib.idle_add(self._toast_track_count)
+            GLib.idle_add(self._reload)
+            GLib.idle_add(self._start_cover_worker)
 
         threading.Thread(target=work, daemon=True).start()
         return False
 
-    # ---------- tabs / navigation ----------
+    def _setup_dnd(self):
+        """Folders dropped anywhere on the window are added to the library."""
+        drop = Gtk.DropTarget.new(Gdk.FileList, Gdk.DragAction.COPY)
+        drop.connect("drop", self._on_drop)
+        self.add_controller(drop)
 
-    def _toast(self, text):
-        self.toast_overlay.add_toast(Adw.Toast.new(text))
-
-    def _on_sort_mode(self, action, param):
-        group = SORT_GROUP_FOR_TAB.get(self.view)
-        if not group:
-            return
-        mode = param.get_string()
-        action.set_state(param)
-        self._sort[group] = mode
-        self.settings.set_string(f"sort-{group}", mode)
-        self._apply_filters()
-
-    def _update_sort_button(self):
-        group = SORT_GROUP_FOR_TAB.get(self.view)
-        self.sort_btn.set_visible(group is not None)
-        if group is None:
-            return
-        menu = Gio.Menu()
-        section = Gio.Menu()
-        for label, mode in SORT_OPTIONS[group]:
-            item = Gio.MenuItem.new(label, None)
-            item.set_action_and_target_value("win.sort-mode", GLib.Variant("s", mode))
-            section.append_item(item)
-        menu.append_section("Sort by", section)
-        self.sort_btn.set_menu_model(menu)
-        action = self.lookup_action("sort-mode")
-        if action:
-            action.set_state(GLib.Variant("s", self._sort[group]))
-
-    def _select_tab(self, name):
-        self.view = name
-        self._last_tab = name
-        # An empty library shows the "No Music Yet" page instead of blank grids.
-        if not self._tracks_all and name in ("albums", "tracks", "favourites"):
-            self.paper_stack.set_visible_child_name("empty")
-        else:
-            self.paper_stack.set_visible_child_name(name)
-        self.detail_back_row.set_visible(False)
-        self._update_sort_button()
-        for key, btn in self._tab_buttons.items():
-            if key == name:
-                btn.add_css_class("tab-active")
-            else:
-                btn.remove_css_class("tab-active")
-
-    def _open_artist(self, artist_id, select_album_id=None):
-        artist = lib.get_artist(self.con, artist_id)
-        if not artist:
-            return
-        self.view = "detail"
-        self._detail_mode = "artist"
-        self._detail_artist_id = artist_id
-        self._detail_album_filter = select_album_id
-        self.paper_stack.set_visible_child_name("detail")
-        self.detail_back_row.set_visible(True)
-        self.sort_btn.set_visible(False)
-        self._render_detail()
-
-    def _open_album(self, album_id):
-        album = lib.get_album(self.con, album_id)
-        if not album:
-            return
-        self.view = "detail"
-        self._detail_mode = "album"
-        self._detail_album_id = album_id
-        self.paper_stack.set_visible_child_name("detail")
-        self.detail_back_row.set_visible(True)
-        self.sort_btn.set_visible(False)
-        self._render_detail()
-
-    def _open_playlist(self, playlist_id):
-        playlist = lib.get_playlist(self.con, playlist_id)
-        if not playlist:
-            return
-        self.view = "detail"
-        self._detail_mode = "playlist"
-        self._detail_playlist_id = playlist_id
-        self.paper_stack.set_visible_child_name("detail")
-        self.detail_back_row.set_visible(True)
-        self.sort_btn.set_visible(False)
-        self._render_detail()
-
-    def _go_back(self):
-        self._select_tab(self._last_tab if self._last_tab in VIEW_NAMES else "albums")
-
-    def _clear_box(self, box):
-        child = box.get_first_child()
-        while child:
-            nxt = child.get_next_sibling()
-            box.remove(child)
-            child = nxt
-
-    def _render_detail(self):
-        if self._detail_mode == "album":
-            self._render_album_detail()
-        elif self._detail_mode == "playlist":
-            self._render_playlist_detail()
-        else:
-            self._render_artist_detail()
-
-    def _set_detail_tracks(self, rows, *, sub_field, entries=TRACK_ENTRIES, extra=None,
-                           reorderable=False):
-        """Fill the detail track list from library rows; sub_field picks the
-        secondary line ("album_title" on artist pages, "artist_name" on album
-        and playlist pages). With reorderable=True rows can be drag-reordered
-        (playlist pages)."""
-        self._clear_box(self.detail_tracks_box)
-        self._detail_tracks = [
-            Track(id=r["id"], path=r["path"], title=r["title"], artist=r["artist_name"],
-                  album=r["album_title"], album_id=r["album_id"], track_no=r["track_no"] or 0,
-                  duration=r["duration"] or 0.0)
-            for r in rows
-        ]
-        for i, (t, r) in enumerate(zip(self._detail_tracks, rows)):
-            row = self._track_row_widget()
-            self._fill_track_row(row, title=t.title, sub=r[sub_field], album_text=None,
-                                  duration=t.duration, index=i, playing=self._is_playing_track(t.id),
-                                  track_id=t.id, fav=bool(r["favorite"]))
-            gesture = Gtk.GestureClick(button=1)
-            gesture.connect("released", lambda _g, _n, _x, _y, pos=i: self._play_from(self._detail_tracks, pos))
-            row.add_controller(gesture)
-            if reorderable:
-                drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
-                drag.connect(
-                    "prepare",
-                    lambda _s, _x, _y, pos=i: Gdk.ContentProvider.new_for_value(str(pos)),
-                )
-                row.add_controller(drag)
-                drop = Gtk.DropTarget.new(str, Gdk.DragAction.MOVE)
-                drop.connect(
-                    "drop",
-                    lambda _t, value, _x, _y, pos=i: self._on_reorder_drop(value, pos),
-                )
-                row.add_controller(drop)
-            self._attach_menu(row, "track", t.id, entries, extra=extra)
-            self.detail_tracks_box.append(row)
-
-    def _on_reorder_drop(self, value, dst):
+    def _on_drop(self, _target, value, _x, _y):
         try:
-            src = int(value)
-        except (TypeError, ValueError):
+            files = value.get_files()
+        except Exception:
             return False
-        order = self._detail_entry_ids
-        if src == dst or not (0 <= src < len(order)) or not (0 <= dst < len(order)):
+        folders = [f.get_path() for f in files if f.get_path() and os.path.isdir(f.get_path())]
+        if not folders:
+            self._toast("Drop a folder to add it to your library")
             return False
-        entry = order.pop(src)
-        order.insert(dst, entry)
-        lib.reorder_playlist(self.con, self._detail_playlist_id, order)
-        self._reload_all()
-        return True
-
-    def _render_playlist_detail(self):
-        playlist = lib.get_playlist(self.con, self._detail_playlist_id)
-        if not playlist:
-            self._go_back()
-            return
-
-        self.detail_kind_label.set_label("Playlist")
-        self.detail_albums_section.set_visible(False)
-
-        tracks = lib.playlist_tracks(self.con, self._detail_playlist_id)
-
-        self._clear_box(self.detail_hero_slot)
-        hero = Swatch("playlist", size=108)
-        hero.set_path(next((r["cover_path"] for r in tracks if r["cover_path"]), None))
-        self.detail_hero_slot.append(hero)
-        self.detail_name_label.set_label(playlist["name"])
-
-        total = sum(r["duration"] or 0 for r in tracks)
-        self.detail_stats_label.set_label(f"{len(tracks)} tracks · {_fmt_time(total)}")
-        self.detail_filter_label.set_label("")
-
-        self._detail_entry_ids = [r["entry_id"] for r in tracks]
-        self._set_detail_tracks(tracks, sub_field="artist_name",
-                                 entries=PLAYLIST_TRACK_ENTRIES,
-                                 extra={"pl": self._detail_playlist_id},
-                                 reorderable=True)
-
-    def _render_artist_detail(self):
-        artist = lib.get_artist(self.con, self._detail_artist_id)
-        if not artist:
-            self._go_back()
-            return
-
-        self.detail_kind_label.set_label("Artist")
-        self.detail_albums_section.set_visible(True)
-
-        self._clear_box(self.detail_hero_slot)
-        hero = Swatch("artist photo", size=108)
-        hero.set_path(artist["photo_path"] or None)
-        self.detail_hero_slot.append(hero)
-        self.detail_name_label.set_label(artist["name"])
-
-        albums = lib.albums_by_artist(self.con, artist["id"])
-        artist_tracks = lib.tracks_by_artist(self.con, artist["id"])
-        self.detail_stats_label.set_label(f"{len(albums)} albums · {len(artist_tracks)} tracks")
-
-        self._clear_box(self.detail_albums_box)
-        self._detail_album_ids = [a["id"] for a in albums]
-        for a in albums:
-            chip = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, width_request=84)
-            swatch = Swatch(None, size=84)
-            swatch.set_path(a["cover_path"] or None)
-            if self._detail_album_filter == a["id"]:
-                swatch.add_css_class("chip-selected")
-            # max_width_chars caps the label's *natural* width so a long album
-            # title can't widen its chip past the 84px swatch (the flow box
-            # gives each chip its natural width, so one long title made the
-            # first chip wider than the rest).
-            label = Gtk.Label(label=a["title"], justify=Gtk.Justification.CENTER,
-                               ellipsize=Pango.EllipsizeMode.END,
-                               max_width_chars=8, width_chars=0,
-                               css_classes=["chip-label"])
-            chip.set_cursor(POINTER_CURSOR)
-            chip.append(swatch)
-            chip.append(label)
-            self._attach_menu(chip, "album", a["id"], ALBUM_ENTRIES)
-            self.detail_albums_box.append(chip)
-
-        if not self._flowbox_connected:
-            self.detail_albums_box.connect("child-activated", self._on_album_chip_activated)
-            self._flowbox_connected = True
-
-        if self._detail_album_filter:
-            filtered = lib.tracks_by_album(self.con, self._detail_album_filter)
-            album = lib.get_album(self.con, self._detail_album_filter)
-            self.detail_filter_label.set_label(album["title"] if album else "All")
-        else:
-            filtered = artist_tracks
-            self.detail_filter_label.set_label("All")
-
-        self._set_detail_tracks(filtered, sub_field="album_title")
-
-    def _render_album_detail(self):
-        album = lib.get_album(self.con, self._detail_album_id)
-        if not album:
-            self._go_back()
-            return
-
-        self.detail_kind_label.set_label("Album")
-        self.detail_albums_section.set_visible(False)
-
-        self._clear_box(self.detail_hero_slot)
-        hero = Swatch("cover art", size=108)
-        hero.set_path(album["cover_path"] or None)
-        self.detail_hero_slot.append(hero)
-        self.detail_name_label.set_label(album["title"])
-
-        tracks = lib.tracks_by_album(self.con, album["id"])
-        parts = [album["artist_name"]]
-        if album["year"]:
-            parts.append(str(album["year"]))
-        parts.append(f"{len(tracks)} tracks")
-        self.detail_stats_label.set_label(" · ".join(parts))
-        self.detail_filter_label.set_label("")
-
-        self._set_detail_tracks(tracks, sub_field="artist_name")
-
-    def _on_album_chip_activated(self, _flowbox, child):
-        idx = child.get_index()
-        if 0 <= idx < len(self._detail_album_ids):
-            album_id = self._detail_album_ids[idx]
-            self._detail_album_filter = None if self._detail_album_filter == album_id else album_id
-            self._render_detail()
-
-    # ---------- search ----------
-
-    def _on_search_changed(self, entry):
-        self._search_query = entry.get_text().strip().lower()
-        self._apply_filters()
-
-    def _sorted_artists(self, artists):
-        if self._sort["artists"] == "plays":
-            return sorted(artists, key=lambda a: (-self._artist_plays.get(a.id, 0),
-                                                  a.name.lower()))
-        return artists  # library order is already by name
-
-    def _sorted_albums(self, albums):
-        mode = self._sort["albums"]
-        if mode == "title":
-            return sorted(albums, key=lambda a: a.title.lower())
-        if mode == "year":
-            return sorted(albums, key=lambda a: (-(a.year or 0), a.artist.lower()))
-        if mode == "plays":
-            return sorted(albums, key=lambda a: (-self._album_plays.get(a.id, 0),
-                                                 a.title.lower()))
-        return albums  # library order is already artist, year
-
-    def _sorted_tracks(self, tracks):
-        mode = self._sort["tracks"]
-        if mode == "artist":
-            return sorted(tracks, key=lambda t: (t.artist.lower(), t.album.lower(),
-                                                 t.track_no))
-        if mode == "album":
-            return sorted(tracks, key=lambda t: (t.album.lower(), t.track_no))
-        if mode == "plays":
-            return sorted(tracks, key=lambda t: (-self._track_plays.get(t.id, 0),
-                                                 t.title.lower()))
-        if mode == "recent":
-            return sorted(tracks, key=lambda t: -t.id)
-        return tracks  # library order is already by title
-
-    def _apply_filters(self):
-        q = self._search_query
-        self.artist_store.remove_all()
-        for a in self._sorted_artists(self._artists_all):
-            if not q or q in a.name.lower():
-                self.artist_store.append(a)
-
-        # Albums also match when a track they contain matches the query, so
-        # searching for a song surfaces the album that includes it.
-        albums_with_track_hit = set()
-        if q:
-            for t in self._tracks_all:
-                if t.album_id and (q in t.title.lower() or q in t.artist.lower()):
-                    albums_with_track_hit.add(t.album_id)
-        self.album_store.remove_all()
-        for a in self._sorted_albums(self._albums_all):
-            if (not q or q in a.title.lower() or q in a.artist.lower()
-                    or a.id in albums_with_track_hit):
-                self.album_store.append(a)
-
-        self.track_store.remove_all()
-        self._visible_tracks = [
-            t for t in self._sorted_tracks(self._tracks_all)
-            if not q or q in t.title.lower() or q in t.artist.lower() or q in t.album.lower()
-        ]
-        for t in self._visible_tracks:
-            self.track_store.append(t)
-
-        self.fav_store.remove_all()
-        self._visible_favs = [t for t in self._visible_tracks if t.favorite]
-        for t in self._visible_favs:
-            self.fav_store.append(t)
-
-        self.playlist_store.remove_all()
-        for p in self._playlists_all:
-            if not q or q in p.name.lower():
-                self.playlist_store.append(p)
-
-    # ---------- library loading ----------
-
-    def _on_add_folder(self):
-        dialog = Gtk.FileDialog()
-        dialog.select_folder(self, None, self._folder_chosen)
-
-    def _on_rescan(self):
-        """Rescan folders already in the library for new/changed/removed files."""
-        self._toast("Rescanning library…")
-
-        def work():
-            lib.scan_all(self.con)
-            GLib.idle_add(self._reload_all)
-            GLib.idle_add(self._toast_track_count)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _toast_track_count(self):
-        self._toast(f"Library updated — {len(self._tracks_all)} tracks")
-        return False
-
-    def _on_fetch_metadata(self):
-        """Fetch missing cover art / artist photos from MusicBrainz + Wikidata."""
-        self._toast("Fetching covers and artist photos…")
-
-        def work():
-            meta.fetch_all_missing(self.con)
-            GLib.idle_add(self._reload_all)
-            GLib.idle_add(lambda: self._toast("Metadata fetch finished") and False)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _folder_chosen(self, dialog, result):
-        try:
-            folder = dialog.select_folder_finish(result)
-        except GLib.Error:
-            return
-        if not folder:
-            return
-        path = folder.get_path()
-        lib.add_folder(self.con, path)
-        self._toast("Scanning folder…")
-
-        def work():
-            lib.scan_folder(self.con, path)
-            GLib.idle_add(self._reload_all)
-            GLib.idle_add(self._refresh_watchers)
-            GLib.idle_add(self._toast_track_count)
-            meta.fetch_all_missing(self.con)
-            GLib.idle_add(self._reload_all)
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _reload_all(self):
-        self._artists_all = [
-            Artist(id=r["id"], name=r["name"], photo_path=r["photo_path"] or "",
-                   album_count=r["album_count"] or 0, track_count=r["track_count"] or 0)
-            for r in lib.all_artists(self.con)
-        ]
-        self._albums_all = [
-            Album(id=r["id"], title=r["title"], artist=r["artist_name"],
-                  year=r["year"] or 0, cover_path=r["cover_path"] or "")
-            for r in lib.all_albums(self.con)
-        ]
-        self._tracks_all = [
-            Track(id=r["id"], path=r["path"], title=r["title"], artist=r["artist_name"],
-                  album=r["album_title"], album_id=r["album_id"],
-                  track_no=r["track_no"] or 0, duration=r["duration"] or 0.0,
-                  favorite=bool(r["favorite"]))
-            for r in lib.all_tracks(self.con)
-        ]
-        self._playlists_all = [
-            Playlist(id=r["id"], name=r["name"], track_count=r["track_count"] or 0,
-                     cover_path=r["cover_path"] or "")
-            for r in lib.all_playlists(self.con)
-        ]
-        self._track_plays = dict(self.con.execute(
-            "SELECT track_id, COUNT(*) FROM plays GROUP BY track_id").fetchall())
-        self._artist_plays = dict(self.con.execute(
-            """SELECT t.artist_id, COUNT(*) FROM plays p
-               JOIN tracks t ON t.id = p.track_id GROUP BY t.artist_id""").fetchall())
-        self._album_plays = dict(self.con.execute(
-            """SELECT t.album_id, COUNT(*) FROM plays p
-               JOIN tracks t ON t.id = p.track_id GROUP BY t.album_id""").fetchall())
-        self._prune_queue()
-        self._apply_filters()
-        if self.view == "detail" and (self._detail_artist_id is not None
-                                       or self._detail_album_id is not None
-                                       or self._detail_playlist_id is not None):
-            self._render_detail()
-        elif self.view in VIEW_NAMES:
-            self._select_tab(self.view)  # refreshes the empty-state page
-        return False
-
-    def _prune_queue(self):
-        """Sync the queue with a reloaded library: drop tracks that no longer
-        exist (files deleted, folder removed…) and refresh the rest so tag
-        edits show up. If the playing track itself is gone, stop playback and
-        hide the player."""
-        by_id = {t.id: t for t in self._tracks_all}
-        q = self.queue
-        q.invalidate_peek()
-        q.upcoming = [by_id[t.id] for t in q.upcoming if t.id in by_id]
-        q.history = [by_id[t.id] for t in q.history if t.id in by_id]
-        if q.current is not None:
-            fresh = by_id.get(q.current.id)
-            if fresh is None:
-                q.current = None
-                self.player.stop()
-                self._set_play_icon("lyre-play-symbolic")
-                self._update_inhibit(False)
-                self._apply_player_visibility()
-            else:
-                q.current = fresh
-                self.now_title.set_label(fresh.title)
-                self.now_artist.set_label(fresh.artist)
-        self._refresh_upnext()
-        if getattr(self, "mpris", None):
-            self.mpris.update()
-
-    # ---------- playback ----------
-
-    def _setup_player_controls(self):
-        self.play_btn.connect("clicked", lambda *_: self._toggle_play())
-        self.prev_btn.connect("clicked", lambda *_: self._on_prev())
-        self.next_btn.connect("clicked", lambda *_: self._advance())
-        self.nav_play_btn.connect("clicked", lambda *_: self._toggle_play())
-        self.nav_prev_btn.connect("clicked", lambda *_: self._on_prev())
-        self.nav_next_btn.connect("clicked", lambda *_: self._advance())
-        self.shuffle_btn.connect("toggled", lambda b: setattr(self.queue, "shuffle", b.get_active()))
-        self.repeat_btn.connect("toggled", lambda b: setattr(self.queue, "repeat", b.get_active()))
-        self.upnext_clear_btn.connect("clicked", lambda *_: self._clear_upnext())
-        self.seek_scale.connect("change-value", self._on_seek)
-        self.volume_scale.connect("value-changed", self._on_volume_changed)
-        self.player.set_volume(self.volume_scale.get_value())
-
-    def _clear_upnext(self):
-        self.queue.upcoming.clear()
-        self.queue.invalidate_peek()
-        self._refresh_upnext()
-
-    def _on_track_activate(self, _list_view, position):
-        self._play_from(self._visible_tracks, position)
-
-    def _play_from(self, tracks, position):
-        self.queue.play(list(tracks[position:]))
-        self._start_current()
-
-    def _play_detail(self):
-        """Play the current detail page (album / playlist / artist) from its
-        first track."""
-        if self._detail_tracks:
-            self._play_from(self._detail_tracks, 0)
-
-    def _start_current(self):
-        t = self.queue.current
-        if not t:
-            return
-        self._gapless_pending = None
-        self.player.load(t.path)
-        self.player.play()
-        self._track_started(t)
-
-    def _track_started(self, t):
-        """UI + bookkeeping for a track that just began playing, whether from
-        a manual start or a gapless hand-over."""
-        self.now_title.set_label(t.title)
-        self.now_artist.set_label(t.artist)
-
-        # One persistent swatch, reused across track changes.
-        if self._player_art is None:
-            self._player_art = Swatch("cover art", size=self.PLAYER_WIDTH)
-            self._player_art.set_hexpand(True)
-            self.player_art_slot.set_child(self._player_art)
-        album = lib.get_album(self.con, t.album_id) if t.album_id else None
-        self._player_art.set_path((album["cover_path"] if album else None) or None)
-
-        self._apply_player_visibility()
-        self._set_play_icon("lyre-pause-symbolic")
-        self._refresh_upnext()
-        self._apply_filters()
-        lib.record_play(self.con, t.id)
-        self._update_inhibit(True)
-        self._notify_track(t)
-        if getattr(self, "mpris", None):
-            self.mpris.update()
-        if self.view == "detail":
-            self._render_detail()
-
-    # ---------- gapless hand-over ----------
-
-    def _gapless_next_path(self):
-        """Called on GStreamer's streaming thread just before the current
-        track ends: pick the next track so playback continues seamlessly.
-        Only the choice happens here; queue/UI commit on stream start."""
-        nxt = self.queue.peek_next()
-        if not nxt:
-            return None
-        self._gapless_pending = nxt
-        return nxt.path
-
-    def _on_gapless_started(self):
-        if self._gapless_pending is None:
-            return False  # stream start from a manual load, already handled
-        self._gapless_pending = None
-        t = self.queue.advance()
-        if t:
-            self._track_started(t)
-        return False
-
-    def _update_inhibit(self, playing):
-        """Keep the session awake while music plays."""
-        app = self.get_application()
-        if app is None:
-            return
-        if playing and not self._inhibit_cookie:
-            self._inhibit_cookie = app.inhibit(
-                self, Gtk.ApplicationInhibitFlags.SUSPEND, "Music is playing")
-        elif not playing and self._inhibit_cookie:
-            app.uninhibit(self._inhibit_cookie)
-            self._inhibit_cookie = 0
-
-    def _notify_track(self, t):
-        """Desktop notification on track change while the window is unfocused."""
-        if self.is_active() or not self.settings.get_boolean("notify-on-track-change"):
-            return
-        app = self.get_application()
-        if app is None:
-            return
-        notification = Gio.Notification.new(t.title)
-        notification.set_body(t.artist)
-        cover = self.current_cover_path()
-        if cover:
-            notification.set_icon(Gio.FileIcon.new(Gio.File.new_for_path(cover)))
-        app.send_notification("now-playing", notification)
-
-    def _on_player_error(self, message):
-        """A file failed to play (deleted, corrupt, unreadable): say so and
-        move on instead of stalling the queue."""
-        t = self.queue.current
-        self._toast(f"Couldn't play “{t.title}” — skipping" if t else "Playback error")
-        self._advance()
-        return False
-
-    def _on_prev(self):
-        if self.player.position() > 3:
-            self.player.seek(0)
-            return
-        prev = self.queue.previous()
-        if prev:
-            self._start_current()
-        else:
-            self.player.seek(0)
-
-    def _advance(self):
-        self._gapless_pending = None
-        nxt = self.queue.advance()
-        if nxt:
-            self._start_current()
-        else:
-            self.player.stop()
-            self._set_play_icon("lyre-play-symbolic")
-            self._update_inhibit(False)
-            self._refresh_upnext()
-            self._apply_filters()
-            if getattr(self, "mpris", None):
-                self.mpris.update()
-        return False
-
-    # ---------- up next ----------
-
-    def _refresh_upnext(self):
-        self._clear_box(self.upnext_box)
-        upcoming = self.queue.upcoming[:30]
-        self.upnext_header.set_visible(bool(upcoming))
-        for i, t in enumerate(upcoming):
-            row = Gtk.Box(spacing=10)
-            row.add_css_class("upnext-row")
-            index_lbl = Gtk.Label(label=f"{i + 1:02d}", width_chars=2, xalign=0,
-                                   css_classes=["track-index"])
-            text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, hexpand=True)
-            # max_width_chars caps the label's *natural* width so a long title
-            # can't stretch the fixed-width player panel (see PLAYER_WIDTH).
-            title_lbl = Gtk.Label(label=t.title, xalign=0, ellipsize=Pango.EllipsizeMode.END,
-                                   max_width_chars=18, width_chars=0,
-                                   css_classes=["upnext-title"])
-            sub_lbl = Gtk.Label(label=t.artist, xalign=0, ellipsize=Pango.EllipsizeMode.END,
-                                 max_width_chars=18, width_chars=0,
-                                 css_classes=["mono-dim-sm"])
-            text_box.append(title_lbl)
-            text_box.append(sub_lbl)
-            duration_lbl = Gtk.Label(label=_fmt_time(t.duration), css_classes=["mono-dim-sm"])
-            db_track = lib.get_track(self.con, t.id)
-            is_fav = bool(db_track["favorite"]) if db_track else False
-            fav_btn = Gtk.Button(
-                icon_name="lyre-heart-filled-symbolic" if is_fav else "lyre-heart-symbolic",
-                valign=Gtk.Align.CENTER, tooltip_text="Favourite",
-                css_classes=["flat", "heart-btn"] + (["faved"] if is_fav else []))
-            fav_btn.connect("clicked", lambda _b, tid=t.id: self._toggle_favorite(tid))
-            remove_btn = Gtk.Button(icon_name="window-close-symbolic", valign=Gtk.Align.CENTER,
-                                     tooltip_text="Remove from queue",
-                                     css_classes=["flat", "upnext-remove"])
-            remove_btn.connect("clicked", lambda _b, pos=i: self._remove_upcoming(pos))
-            row.set_cursor(POINTER_CURSOR)
-            fav_btn.set_cursor(POINTER_CURSOR)
-            remove_btn.set_cursor(POINTER_CURSOR)
-            row.append(index_lbl)
-            row.append(text_box)
-            row.append(duration_lbl)
-            row.append(fav_btn)
-            row.append(remove_btn)
-            gesture = Gtk.GestureClick(button=1)
-            gesture.connect("released", lambda *_a, pos=i: self._play_upcoming(pos))
-            row.add_controller(gesture)
-            drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
-            drag.connect("prepare",
-                         lambda _s, _x, _y, pos=i: Gdk.ContentProvider.new_for_value(f"upnext:{pos}"))
-            row.add_controller(drag)
-            drop = Gtk.DropTarget.new(str, Gdk.DragAction.MOVE)
-            drop.connect("drop",
-                         lambda _t, value, _x, _y, pos=i: self._on_upnext_reorder(value, pos))
-            row.add_controller(drop)
-            self.upnext_box.append(row)
-
-    def _remove_upcoming(self, idx):
-        if 0 <= idx < len(self.queue.upcoming):
-            self.queue.upcoming.pop(idx)
-            self.queue.invalidate_peek()
-            self._refresh_upnext()
-
-    def _on_upnext_reorder(self, value, dst):
-        try:
-            kind, src = str(value).split(":", 1)
-            src = int(src)
-        except (TypeError, ValueError):
-            return False
-        upcoming = self.queue.upcoming
-        if kind != "upnext" or src == dst or not (0 <= src < len(upcoming)) \
-                or not (0 <= dst < len(upcoming)):
-            return False
-        upcoming.insert(dst, upcoming.pop(src))
-        self.queue.invalidate_peek()
-        self._refresh_upnext()
-        return True
-
-    def _play_upcoming(self, idx):
-        tracks = self.queue.upcoming[idx:]
-        if tracks:
-            self.queue.play(tracks)
-            self._start_current()
-
-    def _on_space_pressed(self, _ctl, keyval, _keycode, state):
-        if keyval != Gdk.KEY_space:
-            return False
-        if state & (Gdk.ModifierType.CONTROL_MASK | Gdk.ModifierType.ALT_MASK
-                    | Gdk.ModifierType.SHIFT_MASK):
-            return False
-        # Never steal space from a text field (the focused widget inside an
-        # entry is a Gtk.Text; TextView/Editable cover any future editors).
-        focus = self.get_focus()
-        if isinstance(focus, (Gtk.Text, Gtk.TextView)) or isinstance(focus, Gtk.Editable):
-            return False
-        self._toggle_play()
-        return True
-
-    def _set_play_icon(self, name):
-        """Keep the panel's play/pause glyph and the nav-bar mini control in
-        sync."""
-        self.play_icon.set_from_icon_name(name)
-        self.nav_play_icon.set_from_icon_name(name)
-
-    def _toggle_play(self):
-        if not self.queue.current:
-            return
-        if self.player.is_playing():
-            self.player.pause()
-            self._set_play_icon("lyre-play-symbolic")
-            self._update_inhibit(False)
-        else:
-            self.player.play()
-            self._set_play_icon("lyre-pause-symbolic")
-            self._update_inhibit(True)
-        self._apply_filters()
-        if getattr(self, "mpris", None):
-            self.mpris.update()
-
-    def _on_seek(self, _scale, _scroll, value):
-        self.player.seek(value)
-        if getattr(self, "mpris", None):
-            self.mpris.notify_seeked()
-        return False
-
-    def _volume_step(self, delta):
-        self.volume_scale.set_value(
-            max(0.0, min(1.0, self.volume_scale.get_value() + delta)))
-
-    def _toggle_mute(self):
-        value = self.volume_scale.get_value()
-        if value > 0.001:
-            self._pre_mute_volume = value
-            self.volume_scale.set_value(0.0)
-        else:
-            self.volume_scale.set_value(getattr(self, "_pre_mute_volume", 0.7))
-
-    def _on_volume_changed(self, scale):
-        value = scale.get_value()
-        self.player.set_volume(value)
-        if value <= 0.001:
-            level = "muted"
-        elif value < 0.34:
-            level = "low"
-        elif value < 0.67:
-            level = "medium"
-        else:
-            level = "high"
-        self.volume_btn.set_icon_name(f"lyre-volume-{level}-symbolic")
-        self.volume_btn.set_tooltip_text("Unmute" if level == "muted" else "Mute")
-
-    def _tick(self):
-        if self.queue.current:
-            dur = self.player.duration() or 1
-            pos = self.player.position()
-            self.seek_scale.set_range(0, dur)
-            self.seek_scale.set_value(pos)
-            self.elapsed_label.set_label(_fmt_time(pos))
-            self.duration_label.set_label(_fmt_time(dur))
+        self._add_folders(folders)
         return True

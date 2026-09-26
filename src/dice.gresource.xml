@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/drvonmiau/Dice">
+    <file preprocess="xml-stripblanks">window.ui</file>
+    <file preprocess="xml-stripblanks">gtk/help-overlay.ui</file>
+    <file compressed="true">style.css</file>
+    <file>icons/scalable/actions/dice-play-symbolic.svg</file>
+    <file>icons/scalable/actions/dice-heart-symbolic.svg</file>
+    <file>icons/scalable/actions/dice-heart-filled-symbolic.svg</file>
+    <file>icons/scalable/actions/dice-more-symbolic.svg</file>
+    <file>icons/scalable/actions/dice-sort-symbolic.svg</file>
+    <file>icons/scalable/actions/dice-menu-symbolic.svg</file>
+    <file>icons/scalable/actions/dice-x-symbolic.svg</file>
+    <file>icons/scalable/apps/io.github.drvonmiau.Dice-symbolic.svg</file>
+  </gresource>
+</gresources>

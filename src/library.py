@@ -1,65 +1,69 @@
-"""Local music library: SQLite storage + folder scanner."""
-import base64
+"""Local game library: SQLite storage + folder scanner.
+
+The shape follows Lyre and Easel: the user adds folders, the scanner walks them
+and keeps one row per ROM file, and anything the user did (favourites, a
+hand-picked cover, play history) survives rescans because rows are updated in
+place rather than replaced. Dice only ever *reads* the ROM folders.
+"""
+import hashlib
 import os
 import sqlite3
+import time
 from pathlib import Path
 
-from mutagen import File as MutagenFile
-from mutagen.flac import Picture
+from . import platforms, romscan
 
-DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "musicplayer"
-CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "musicplayer"
-COVERS_DIR = CACHE_DIR / "covers"
-PHOTOS_DIR = CACHE_DIR / "artists"
+DATA_DIR = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local/share")) / "dice"
+CACHE_DIR = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "dice"
+# Covers Dice owns: art the user picked, art pulled out of a disc image and
+# art downloaded online. Kept under data (not cache) so a picked cover is
+# never silently lost when caches are cleared.
+COVERS_DIR = DATA_DIR / "covers"
 DB_PATH = DATA_DIR / "library.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS folders(id INTEGER PRIMARY KEY, path TEXT UNIQUE);
-CREATE TABLE IF NOT EXISTS artists(
-  id INTEGER PRIMARY KEY, name TEXT UNIQUE, photo_path TEXT,
-  mb_id TEXT, info_fetched INTEGER DEFAULT 0);
-CREATE TABLE IF NOT EXISTS albums(
-  id INTEGER PRIMARY KEY, title TEXT, artist_id INTEGER, year INTEGER,
-  cover_path TEXT, mb_id TEXT, info_fetched INTEGER DEFAULT 0,
-  UNIQUE(title, artist_id), FOREIGN KEY(artist_id) REFERENCES artists(id));
-CREATE TABLE IF NOT EXISTS tracks(
-  id INTEGER PRIMARY KEY, path TEXT UNIQUE, title TEXT, artist_id INTEGER,
-  album_id INTEGER, track_no INTEGER, duration REAL, mtime REAL,
+CREATE TABLE IF NOT EXISTS games(
+  id INTEGER PRIMARY KEY,
+  path TEXT UNIQUE,
+  platform TEXT NOT NULL,
+  title TEXT NOT NULL,
+  serial TEXT DEFAULT '',
+  internal_title TEXT DEFAULT '',
+  region TEXT DEFAULT '',
+  format TEXT DEFAULT '',
+  size INTEGER DEFAULT 0,
+  mtime REAL DEFAULT 0,
+  added_at REAL DEFAULT 0,
+  last_played REAL DEFAULT 0,
+  play_count INTEGER DEFAULT 0,
+  play_seconds INTEGER DEFAULT 0,
   favorite INTEGER DEFAULT 0,
-  FOREIGN KEY(artist_id) REFERENCES artists(id),
-  FOREIGN KEY(album_id) REFERENCES albums(id));
-CREATE TABLE IF NOT EXISTS playlists(id INTEGER PRIMARY KEY, name TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS playlist_tracks(
-  id INTEGER PRIMARY KEY, playlist_id INTEGER NOT NULL, track_id INTEGER NOT NULL,
-  position INTEGER NOT NULL,
-  FOREIGN KEY(playlist_id) REFERENCES playlists(id) ON DELETE CASCADE,
-  FOREIGN KEY(track_id) REFERENCES tracks(id) ON DELETE CASCADE);
-CREATE TABLE IF NOT EXISTS plays(
-  id INTEGER PRIMARY KEY, track_id INTEGER NOT NULL,
-  played_at TEXT NOT NULL DEFAULT (datetime('now')),
-  FOREIGN KEY(track_id) REFERENCES tracks(id) ON DELETE CASCADE);
-CREATE INDEX IF NOT EXISTS idx_plays_track ON plays(track_id);
+  -- cover_source: 'user' (picked in Dice), 'sidecar' (an image next to the
+  -- ROM), 'embedded' (pulled from the disc), 'online' (downloaded) or ''.
+  cover_path TEXT DEFAULT '',
+  cover_source TEXT DEFAULT '',
+  cover_checked INTEGER DEFAULT 0);
+CREATE INDEX IF NOT EXISTS idx_games_platform ON games(platform);
 """
 
-AUDIO_EXT = {".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".wav", ".wma", ".aac"}
+COVER_EXT = (".png", ".jpg", ".jpeg", ".webp")
+# Folders (relative to the ROM's own folder) where front-end tools commonly
+# keep box art named after the ROM: Dice picks those up for free.
+COVER_DIRS = ("", "covers", "Covers", "boxart", "Boxart", "images",
+              "media/covers", "media/box2dfront", "Named_Boxarts")
 
 
 def connect():
     DATA_DIR.mkdir(parents=True, exist_ok=True)
     COVERS_DIR.mkdir(parents=True, exist_ok=True)
-    PHOTOS_DIR.mkdir(parents=True, exist_ok=True)
     con = sqlite3.connect(str(DB_PATH), check_same_thread=False)
     con.row_factory = sqlite3.Row
-    con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
-    # Migration for databases created before the favourites feature.
-    try:
-        con.execute("ALTER TABLE tracks ADD COLUMN favorite INTEGER DEFAULT 0")
-        con.commit()
-    except sqlite3.OperationalError:
-        pass
     return con
 
+
+# ------------------------------------------------------------- folders ----
 
 def add_folder(con, path):
     con.execute("INSERT OR IGNORE INTO folders(path) VALUES (?)", (path,))
@@ -67,453 +71,267 @@ def add_folder(con, path):
 
 
 def all_folders(con):
-    return con.execute("SELECT id, path FROM folders ORDER BY path").fetchall()
+    return [r["path"] for r in con.execute("SELECT path FROM folders ORDER BY path")]
 
 
 def remove_folder(con, path):
-    """Forget a folder and everything scanned from it. Files stay on disk."""
+    """Forget a folder and every game scanned from it. Files stay on disk."""
     con.execute("DELETE FROM folders WHERE path=?", (path,))
-    con.execute("DELETE FROM tracks WHERE path LIKE ?", (path.rstrip("/") + "/%",))
-    prune_orphans(con)
+    con.execute("DELETE FROM games WHERE path LIKE ?", (path.rstrip("/") + "/%",))
+    con.commit()
+    _prune_owned_covers(con)
 
 
 def wipe_library(con):
-    """Erase the whole library: tracks, albums, artists, playlists, play
-    history and folder list. Audio files on disk are untouched."""
-    for table in ("plays", "playlist_tracks", "playlists", "tracks",
-                  "albums", "artists", "folders"):
-        con.execute(f"DELETE FROM {table}")
+    con.execute("DELETE FROM folders")
+    con.execute("DELETE FROM games")
+    con.commit()
+    _prune_owned_covers(con)
+
+
+# --------------------------------------------------------------- games ----
+
+def all_games(con):
+    return con.execute("SELECT * FROM games ORDER BY title COLLATE NOCASE").fetchall()
+
+
+def get_game(con, game_id):
+    return con.execute("SELECT * FROM games WHERE id=?", (game_id,)).fetchone()
+
+
+def set_favorite(con, game_id, favorite):
+    con.execute("UPDATE games SET favorite=? WHERE id=?", (1 if favorite else 0, game_id))
     con.commit()
 
 
-def get_or_create_artist(con, name):
-    row = con.execute("SELECT id FROM artists WHERE name=?", (name,)).fetchone()
-    if row:
-        return row["id"]
-    return con.execute("INSERT INTO artists(name) VALUES (?)", (name,)).lastrowid
+def record_launch(con, game_id):
+    con.execute("UPDATE games SET last_played=?, play_count=play_count+1 WHERE id=?",
+                (time.time(), game_id))
+    con.commit()
 
 
-def get_or_create_album(con, title, artist_id, year):
-    row = con.execute(
-        "SELECT id FROM albums WHERE title=? AND artist_id=?", (title, artist_id)
-    ).fetchone()
-    if row:
-        return row["id"]
-    return con.execute(
-        "INSERT INTO albums(title, artist_id, year) VALUES (?,?,?)", (title, artist_id, year)
-    ).lastrowid
+def add_play_time(con, game_id, seconds):
+    con.execute("UPDATE games SET play_seconds=play_seconds+? WHERE id=?",
+                (int(seconds), game_id))
+    con.commit()
 
 
-def _tag(tags, key, default=""):
-    v = tags.get(key)
-    if isinstance(v, list):
-        return v[0] if v else default
-    return v if v is not None else default
+def _owned_cover_file(game_path, kind, ext=".png"):
+    digest = hashlib.sha1(game_path.encode("utf-8", "surrogatepass")).hexdigest()[:16]
+    return COVERS_DIR / f"{digest}-{kind}{ext}"
 
 
-def _embedded_cover(raw):
-    """Front-cover image bytes embedded in the file's tags, or None.
-    Handles FLAC pictures, ID3 APIC, MP4 covr and OGG/Opus base64 pictures."""
+def set_user_cover(con, game_id, image_path):
+    """Copy a picked image into Dice's covers folder and make it the cover.
+    A picked cover always wins over sidecar, embedded or downloaded art."""
+    row = get_game(con, game_id)
+    if row is None:
+        return None
+    ext = os.path.splitext(image_path)[1].lower() or ".png"
+    dest = _owned_cover_file(row["path"], f"user-{int(time.time())}", ext)
+    with open(image_path, "rb") as src, open(dest, "wb") as out:
+        out.write(src.read())
+    old = row["cover_path"] if row["cover_source"] == "user" else ""
+    con.execute("UPDATE games SET cover_path=?, cover_source='user' WHERE id=?",
+                (str(dest), game_id))
+    con.commit()
+    if old and old.startswith(str(COVERS_DIR)):
+        try:
+            os.remove(old)
+        except OSError:
+            pass
+    return str(dest)
+
+
+def clear_user_cover(con, game_id):
+    """Drop a picked cover and fall straight back to whatever art the game
+    has on its own (sidecar, embedded, or a fresh online lookup)."""
+    row = get_game(con, game_id)
+    if row is None or row["cover_source"] != "user":
+        return
+    con.execute("UPDATE games SET cover_path='', cover_source='', cover_checked=0 "
+                "WHERE id=?", (game_id,))
+    con.commit()
     try:
-        pictures = getattr(raw, "pictures", None)  # FLAC
-        if pictures:
-            front = [p for p in pictures if getattr(p, "type", 0) == 3]
-            return (front[0] if front else pictures[0]).data
-        tags = raw.tags
-        if tags is None:
-            return None
-        getall = getattr(tags, "getall", None)  # ID3 (mp3)
-        if getall:
-            apics = getall("APIC")
-            if apics:
-                front = [p for p in apics if getattr(p, "type", 0) == 3]
-                return (front[0] if front else apics[0]).data
-        if "covr" in tags:  # MP4 (m4a)
-            covr = tags["covr"]
-            if covr:
-                return bytes(covr[0])
-        block = tags.get("metadata_block_picture")  # OGG Vorbis / Opus
-        if block:
-            return Picture(base64.b64decode(block[0])).data
-    except Exception:
+        os.remove(row["cover_path"])
+    except OSError:
         pass
-    return None
+    refresh_game(con, game_id)
 
 
-def _maybe_embedded_cover(con, raw, album_id):
-    """If the album has no cover yet, pull one out of the file's own tags.
-    Cheap no-op when a cover (embedded, fetched or custom) already exists."""
-    row = con.execute("SELECT cover_path FROM albums WHERE id=?", (album_id,)).fetchone()
-    if not row or row["cover_path"]:
+def _folder_parts(con, path):
+    for root in all_folders(con):
+        prefix = root.rstrip("/") + "/"
+        if path.startswith(prefix):
+            rel = Path(os.path.dirname(path[len(prefix):]))
+            return (os.path.basename(root.rstrip("/")),) + tuple(
+                x for x in rel.parts if x not in (".", ""))
+    return tuple(Path(path).parent.parts[-2:])
+
+
+def refresh_game(con, game_id):
+    """Re-read one game's file (metadata and found art)."""
+    row = get_game(con, game_id)
+    if row is None:
         return
-    data = _embedded_cover(raw)
-    if not data:
+    info = romscan.identify(row["path"], _folder_parts(con, row["path"]))
+    if info is None:
         return
-    dest = COVERS_DIR / f"embedded-{album_id}.jpg"
     try:
-        dest.write_bytes(data)
+        mtime = os.path.getmtime(row["path"])
     except OSError:
         return
-    con.execute("UPDATE albums SET cover_path=? WHERE id=?", (str(dest), album_id))
+    _store(con, row["path"], mtime, info, row)
     con.commit()
 
 
-def scan_file(con, path):
-    """Read one audio file's tags into the library (insert or update)."""
+def set_online_cover(con, game_id, data):
+    row = get_game(con, game_id)
+    if row is None or row["cover_source"] in ("user", "sidecar"):
+        return None
+    dest = _owned_cover_file(row["path"], "online")
+    with open(dest, "wb") as out:
+        out.write(data)
+    con.execute("UPDATE games SET cover_path=?, cover_source='online', cover_checked=1 "
+                "WHERE id=?", (str(dest), game_id))
+    con.commit()
+    return str(dest)
+
+
+def mark_cover_checked(con, game_id):
+    con.execute("UPDATE games SET cover_checked=1 WHERE id=?", (game_id,))
+    con.commit()
+
+
+def games_needing_covers(con):
+    return con.execute(
+        "SELECT * FROM games WHERE cover_path='' AND cover_checked=0").fetchall()
+
+
+def _prune_owned_covers(con):
+    """Delete cover files in COVERS_DIR that no game references any more."""
+    used = {r["cover_path"] for r in con.execute("SELECT cover_path FROM games")}
     try:
-        audio = MutagenFile(path, easy=True)
-        raw = MutagenFile(path)
-    except Exception:
-        return
-    if audio is None:
-        return
-    tags = audio.tags or {}
-    title = _tag(tags, "title", Path(path).stem)
-    artist = _tag(tags, "artist", "Unknown Artist")
-    albumartist = _tag(tags, "albumartist", artist)
-    album = _tag(tags, "album", "Unknown Album")
-    try:
-        track_no = int(str(_tag(tags, "tracknumber", "0")).split("/")[0])
-    except ValueError:
-        track_no = 0
-    date = _tag(tags, "date") or _tag(tags, "year")
-    year = None
-    for tok in str(date).replace("-", " ").split():
-        if len(tok) == 4 and tok.isdigit():
-            year = int(tok)
-            break
-    duration = float(raw.info.length) if raw and raw.info else 0.0
-    mtime = os.path.getmtime(path)
-
-    existing = con.execute(
-        "SELECT id, mtime, album_id FROM tracks WHERE path=?", (path,)
-    ).fetchone()
-    if existing and existing["mtime"] == mtime:
-        # Unchanged file — but older libraries may predate embedded-cover
-        # extraction, so still offer its art to a coverless album.
-        _maybe_embedded_cover(con, raw, existing["album_id"])
-        return
-
-    artist_id = get_or_create_artist(con, artist)
-    albumartist_id = get_or_create_artist(con, albumartist)
-    album_id = get_or_create_album(con, album, albumartist_id, year)
-
-    if existing:
-        con.execute(
-            """UPDATE tracks SET title=?, artist_id=?, album_id=?, track_no=?,
-               duration=?, mtime=? WHERE id=?""",
-            (title, artist_id, album_id, track_no, duration, mtime, existing["id"]),
-        )
-    else:
-        con.execute(
-            """INSERT INTO tracks(path, title, artist_id, album_id, track_no, duration, mtime)
-               VALUES (?,?,?,?,?,?,?)""",
-            (path, title, artist_id, album_id, track_no, duration, mtime),
-        )
-    con.commit()
-    _maybe_embedded_cover(con, raw, album_id)
+        for entry in COVERS_DIR.iterdir():
+            if str(entry) not in used:
+                entry.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
-def write_tags(path, *, title, artist, album, track_no=0):
-    """Write basic tags back to the audio file (used by Edit Metadata)."""
-    audio = MutagenFile(path, easy=True)
-    if audio is None:
-        raise ValueError("Unsupported audio file")
-    if audio.tags is None:
-        audio.add_tags()
-    audio["title"] = title
-    audio["artist"] = artist
-    audio["album"] = album
-    if track_no:
-        audio["tracknumber"] = str(track_no)
-    audio.save()
+# -------------------------------------------------------------- scanning ----
+
+def find_sidecar_cover(rom_path):
+    """An image named like the ROM, beside it or in a covers-style folder."""
+    p = Path(rom_path)
+    stems = [p.stem]
+    if p.suffix.lower() == ".pbp":
+        stems = [p.parent.name, "ICON0"]
+    for sub in COVER_DIRS:
+        base = p.parent / sub if sub else p.parent
+        for stem in stems:
+            for ext in COVER_EXT:
+                candidate = base / f"{stem}{ext}"
+                if candidate.is_file():
+                    return str(candidate)
+    return ""
 
 
-def retag_album(con, album_id, *, title, year=None):
-    """Rename an album (and optionally set its year) across every file in it.
-    Returns the titles of tracks whose files couldn't be written."""
-    rows = tracks_by_album(con, album_id)
-    failed, sample_path = [], None
-    for r in rows:
+def _iter_rom_files(root):
+    """(path, folder parts) for candidate files under `root`, skipping hidden
+    entries and the .bin tracks that belong to a .cue sheet."""
+    root_name = os.path.basename(root.rstrip("/"))
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        rel = os.path.relpath(dirpath, root)
+        parts = (root_name,) + (() if rel == "." else tuple(Path(rel).parts))
+        for name in filenames:
+            if name.startswith("."):
+                continue
+            if os.path.splitext(name)[1].lower() in platforms.ALL_EXTENSIONS:
+                yield os.path.join(dirpath, name), parts
+
+
+def scan_folder(con, root, progress=None):
+    """Index every ROM under `root`, updating changed files, adding new ones and
+    dropping rows whose files are gone. Returns the number of games found."""
+    files = list(_iter_rom_files(root))
+    total = len(files)
+    known = {r["path"]: r for r in con.execute(
+        "SELECT id, path, mtime, cover_source FROM games WHERE path LIKE ?",
+        (root.rstrip("/") + "/%",))}
+    seen = set()
+    found = 0
+    for i, (path, parts) in enumerate(files, start=1):
+        if progress:
+            progress(i, total)
         try:
-            audio = MutagenFile(r["path"], easy=True)
-            if audio is None:
-                raise ValueError("Unsupported audio file")
-            if audio.tags is None:
-                audio.add_tags()
-            audio["album"] = title
-            if year:
-                audio["date"] = str(year)
-            audio.save()
-            scan_file(con, r["path"])
-            sample_path = sample_path or r["path"]
-        except Exception:
-            failed.append(r["title"])
-    # scan_file only sets the year when it first creates an album row, so
-    # pin it explicitly on the (possibly new) album the tracks landed in.
-    if year and sample_path:
-        moved = con.execute("SELECT album_id FROM tracks WHERE path=?", (sample_path,)).fetchone()
-        if moved:
-            con.execute("UPDATE albums SET year=? WHERE id=?", (year, moved["album_id"]))
-    prune_orphans(con)
-    return failed
-
-
-def rename_artist(con, artist_id, new_name):
-    """Rename an artist across every file credited to them (both the artist
-    tag and, where it matched the old name, the albumartist tag).
-    Returns the titles of tracks whose files couldn't be written."""
-    row = get_artist(con, artist_id)
-    if not row:
-        return []
-    old_name = row["name"]
-    failed = []
-    for r in tracks_by_artist(con, artist_id):
-        try:
-            audio = MutagenFile(r["path"], easy=True)
-            if audio is None:
-                raise ValueError("Unsupported audio file")
-            if audio.tags is None:
-                audio.add_tags()
-            audio["artist"] = new_name
-            albumartist = audio.get("albumartist")
-            if albumartist and albumartist[0] == old_name:
-                audio["albumartist"] = new_name
-            audio.save()
-            scan_file(con, r["path"])
-        except Exception:
-            failed.append(r["title"])
-    prune_orphans(con)
-    return failed
-
-
-def scan_folder(con, folder, progress_cb=None):
-    files = [
-        os.path.join(r, f)
-        for r, _d, fs in os.walk(folder)
-        for f in fs
-        if Path(f).suffix.lower() in AUDIO_EXT
-    ]
-    for i, path in enumerate(files):
-        scan_file(con, path)
-        if progress_cb:
-            progress_cb(i + 1, len(files))
-    prune(con, folder)
-
-
-def prune_orphans(con):
-    """Delete albums/artists that no longer have any tracks."""
-    con.execute("DELETE FROM albums WHERE id NOT IN (SELECT DISTINCT album_id FROM tracks)")
-    con.execute(
-        "DELETE FROM artists WHERE id NOT IN (SELECT artist_id FROM tracks UNION SELECT artist_id FROM albums)"
-    )
+            mtime = os.path.getmtime(path)
+        except OSError:
+            continue
+        existing = known.get(path)
+        if existing is not None and existing["mtime"] == mtime:
+            seen.add(path)
+            found += 1
+            # Art dropped next to an unchanged ROM still gets picked up.
+            if existing["cover_source"] not in ("user", "sidecar"):
+                cover = find_sidecar_cover(path)
+                if cover:
+                    con.execute("UPDATE games SET cover_path=?, cover_source='sidecar' "
+                                "WHERE id=?", (cover, existing["id"]))
+            continue
+        info = romscan.identify(path, parts)
+        if info is None:
+            continue
+        seen.add(path)
+        found += 1
+        _store(con, path, mtime, info, existing)
+    gone = [p for p in known if p not in seen]
+    for path in gone:
+        con.execute("DELETE FROM games WHERE path=?", (path,))
     con.commit()
+    if gone:
+        _prune_owned_covers(con)
+    return found
 
 
-def prune(con, folder):
-    for row in con.execute("SELECT id, path FROM tracks WHERE path LIKE ?", (folder + "%",)).fetchall():
-        if not os.path.exists(row["path"]):
-            con.execute("DELETE FROM tracks WHERE id=?", (row["id"],))
-    prune_orphans(con)
-
-
-def record_play(con, track_id):
-    """Log one play. Not surfaced in the UI yet; feeds future smart views
-    (Most Played, Recently Played…)."""
-    con.execute("INSERT INTO plays(track_id) VALUES (?)", (track_id,))
-    con.commit()
-
-
-def scan_all(con, progress_cb=None):
-    for row in con.execute("SELECT path FROM folders"):
-        if os.path.isdir(row["path"]):
-            scan_folder(con, row["path"], progress_cb)
-
-
-# ---------- queries (all return rows with consistent artist_name/album_title columns) ----------
-
-def all_artists(con):
-    return con.execute(
-        """SELECT artists.*,
-             (SELECT COUNT(*) FROM albums WHERE albums.artist_id = artists.id) AS album_count,
-             (SELECT COUNT(*) FROM tracks WHERE tracks.artist_id = artists.id) AS track_count
-           FROM artists ORDER BY name"""
-    ).fetchall()
-
-
-def all_albums(con):
-    return con.execute(
-        """SELECT albums.*, artists.name AS artist_name FROM albums
-           JOIN artists ON artists.id = albums.artist_id
-           ORDER BY artists.name, albums.year"""
-    ).fetchall()
-
-
-def all_tracks(con):
-    return con.execute(
-        """SELECT tracks.*, artists.name AS artist_name, albums.title AS album_title
-           FROM tracks JOIN artists ON artists.id = tracks.artist_id
-           JOIN albums ON albums.id = tracks.album_id
-           ORDER BY tracks.title"""
-    ).fetchall()
-
-
-def albums_by_artist(con, artist_id):
-    return con.execute("SELECT * FROM albums WHERE artist_id=? ORDER BY year", (artist_id,)).fetchall()
-
-
-def tracks_by_album(con, album_id):
-    return con.execute(
-        """SELECT tracks.*, artists.name AS artist_name, albums.title AS album_title
-           FROM tracks JOIN artists ON artists.id = tracks.artist_id
-           JOIN albums ON albums.id = tracks.album_id
-           WHERE album_id=? ORDER BY track_no""",
-        (album_id,),
-    ).fetchall()
-
-
-def tracks_by_artist(con, artist_id):
-    return con.execute(
-        """SELECT tracks.*, artists.name AS artist_name, albums.title AS album_title
-           FROM tracks JOIN artists ON artists.id = tracks.artist_id
-           JOIN albums ON albums.id = tracks.album_id
-           WHERE tracks.artist_id=? ORDER BY albums.year, track_no""",
-        (artist_id,),
-    ).fetchall()
-
-
-def get_track(con, track_id):
-    return con.execute(
-        """SELECT tracks.*, artists.name AS artist_name, albums.title AS album_title
-           FROM tracks JOIN artists ON artists.id = tracks.artist_id
-           JOIN albums ON albums.id = tracks.album_id
-           WHERE tracks.id=?""",
-        (track_id,),
-    ).fetchone()
-
-
-def get_album(con, album_id):
-    return con.execute(
-        """SELECT albums.*, artists.name AS artist_name FROM albums
-           JOIN artists ON artists.id = albums.artist_id WHERE albums.id=?""",
-        (album_id,),
-    ).fetchone()
-
-
-def get_artist(con, artist_id):
-    return con.execute("SELECT * FROM artists WHERE id=?", (artist_id,)).fetchone()
-
-
-# ---------- playlists ----------
-
-def all_playlists(con):
-    return con.execute(
-        """SELECT p.id, p.name,
-             (SELECT COUNT(*) FROM playlist_tracks pt WHERE pt.playlist_id = p.id) AS track_count,
-             (SELECT al.cover_path FROM playlist_tracks pt
-                JOIN tracks t ON t.id = pt.track_id
-                JOIN albums al ON al.id = t.album_id
-              WHERE pt.playlist_id = p.id AND al.cover_path IS NOT NULL
-              ORDER BY pt.position LIMIT 1) AS cover_path
-           FROM playlists p ORDER BY p.name"""
-    ).fetchall()
-
-
-def get_playlist(con, playlist_id):
-    return con.execute("SELECT * FROM playlists WHERE id=?", (playlist_id,)).fetchone()
-
-
-def create_playlist(con, name):
-    playlist_id = con.execute("INSERT INTO playlists(name) VALUES (?)", (name,)).lastrowid
-    con.commit()
-    return playlist_id
-
-
-def rename_playlist(con, playlist_id, name):
-    con.execute("UPDATE playlists SET name=? WHERE id=?", (name, playlist_id))
-    con.commit()
-
-
-def delete_playlist(con, playlist_id):
-    con.execute("DELETE FROM playlist_tracks WHERE playlist_id=?", (playlist_id,))
-    con.execute("DELETE FROM playlists WHERE id=?", (playlist_id,))
-    con.commit()
-
-
-def add_to_playlist(con, playlist_id, track_ids):
-    row = con.execute(
-        "SELECT COALESCE(MAX(position), 0) AS p FROM playlist_tracks WHERE playlist_id=?",
-        (playlist_id,),
-    ).fetchone()
-    position = row["p"]
-    for track_id in track_ids:
-        position += 1
+def _store(con, path, mtime, info, existing):
+    cover, source = "", ""
+    keep_user = existing is not None and existing["cover_source"] == "user"
+    if not keep_user:
+        cover = find_sidecar_cover(path)
+        source = "sidecar" if cover else ""
+        if not cover and info.icon:
+            dest = _owned_cover_file(path, "embedded")
+            try:
+                with open(dest, "wb") as out:
+                    out.write(info.icon)
+                cover, source = str(dest), "embedded"
+            except OSError:
+                pass
+    values = dict(platform=info.platform, title=info.title, serial=info.serial,
+                  internal_title=info.internal_title, region=info.region,
+                  format=info.format, size=info.size, mtime=mtime)
+    if existing is None:
         con.execute(
-            "INSERT INTO playlist_tracks(playlist_id, track_id, position) VALUES (?,?,?)",
-            (playlist_id, track_id, position),
-        )
-    con.commit()
+            "INSERT INTO games(path, platform, title, serial, internal_title, region, "
+            "format, size, mtime, added_at, cover_path, cover_source) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+            (path, info.platform, info.title, info.serial, info.internal_title,
+             info.region, info.format, info.size, mtime, time.time(), cover, source))
+        return
+    sets = ", ".join(f"{k}=?" for k in values)
+    params = list(values.values())
+    if not keep_user:
+        sets += ", cover_path=?, cover_source=?"
+        params += [cover, source]
+        # An online cover is kept unless better local art turned up.
+        if existing["cover_source"] == "online" and not cover:
+            sets = sets.replace(", cover_path=?, cover_source=?", "")
+            params = params[:-2]
+    con.execute(f"UPDATE games SET {sets} WHERE id=?", params + [existing["id"]])
 
 
-def remove_from_playlist(con, playlist_id, track_id):
-    con.execute(
-        "DELETE FROM playlist_tracks WHERE playlist_id=? AND track_id=?",
-        (playlist_id, track_id),
-    )
-    con.commit()
-
-
-def playlist_tracks(con, playlist_id):
-    return con.execute(
-        """SELECT tracks.*, artists.name AS artist_name, albums.title AS album_title,
-                  albums.cover_path AS cover_path, pt.id AS entry_id
-           FROM playlist_tracks pt
-           JOIN tracks ON tracks.id = pt.track_id
-           JOIN artists ON artists.id = tracks.artist_id
-           JOIN albums ON albums.id = tracks.album_id
-           WHERE pt.playlist_id=? ORDER BY pt.position""",
-        (playlist_id,),
-    ).fetchall()
-
-
-def reorder_playlist(con, playlist_id, entry_ids):
-    """Rewrite positions to match the given order of playlist_tracks row ids."""
-    for position, entry_id in enumerate(entry_ids, start=1):
-        con.execute(
-            "UPDATE playlist_tracks SET position=? WHERE id=? AND playlist_id=?",
-            (position, entry_id, playlist_id),
-        )
-    con.commit()
-
-
-def set_favorite(con, track_id, favorite):
-    con.execute("UPDATE tracks SET favorite=? WHERE id=?", (1 if favorite else 0, track_id))
-    con.commit()
-
-
-def set_artist_photo(con, artist_id, path):
-    con.execute("UPDATE artists SET photo_path=? WHERE id=?", (path, artist_id))
-    con.commit()
-
-
-def set_album_cover(con, album_id, path):
-    con.execute("UPDATE albums SET cover_path=? WHERE id=?", (path, album_id))
-    con.commit()
-
-
-def delete_track(con, track_id):
-    con.execute("DELETE FROM tracks WHERE id=?", (track_id,))
-    con.commit()
-
-
-def delete_album(con, album_id):
-    con.execute("DELETE FROM tracks WHERE album_id=?", (album_id,))
-    con.execute("DELETE FROM albums WHERE id=?", (album_id,))
-    con.commit()
-
-
-def delete_artist(con, artist_id):
-    con.execute("DELETE FROM tracks WHERE artist_id=?", (artist_id,))
-    con.execute("DELETE FROM albums WHERE artist_id=?", (artist_id,))
-    con.execute("DELETE FROM artists WHERE id=?", (artist_id,))
-    con.commit()
+def scan_all(con, progress=None):
+    return sum(scan_folder(con, root, progress) for root in all_folders(con)
+               if os.path.isdir(root))
