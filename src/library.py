@@ -56,7 +56,7 @@ COVER_DIRS = ("", "covers", "Covers", "boxart", "Boxart", "images",
 
 # Bump when detection changes, so a rescan re-identifies files it would
 # otherwise skip as unchanged (e.g. PS1 discs once filed as PS2).
-SCAN_VERSION = 2
+SCAN_VERSION = 3
 
 
 def connect():

@@ -10,6 +10,7 @@ Tabs are built from the platform registry (platforms.py): All first, then one
 tab per platform that has games, then Favourites.
 """
 import os
+import sys
 import threading
 import time
 from datetime import datetime
@@ -1001,7 +1002,8 @@ class DiceWindow(Adw.ApplicationWindow):
             return "Detecting…"
         return "Not found — set one up"
 
-    def _play(self, game_id):
+    def _play(self, game_id, path=None):
+        """Launch a game (or one disc of it, `path`) in its emulator."""
         game = self._by_id.get(game_id)
         if game is None:
             return
@@ -1010,10 +1012,79 @@ class DiceWindow(Adw.ApplicationWindow):
             self._no_emulator(game.platform)
             return
         # Emulators run outside Dice's sandbox: give them the real path.
-        argv = emulators.build_argv(command, portal.host_path(game.path))
+        rom = portal.host_path(path or game.path)
+        argv = emulators.build_argv(command, rom)
         if not argv:
             self._no_emulator(game.platform)
             return
+        app = emulators.flatpak_app(argv)
+        if app is None:
+            self._launch(game, argv)
+            return
+
+        # A Flatpak emulator only sees folders its permissions allow; check
+        # before launching instead of letting it fail with "file not found".
+        def work():
+            filesystems = emulators.flatpak_filesystems(app)
+            GLib.idle_add(decide, filesystems)
+
+        def decide(filesystems):
+            if portal.split_doc_path(rom):
+                # No real path to grant: share just this file.
+                self._launch(game, emulators.with_file_forwarding(argv, rom))
+            elif filesystems is None or emulators.can_access(filesystems, rom):
+                self._launch(game, argv)
+            else:
+                self._ask_emulator_access(game, argv, app, rom)
+            return False
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _library_root(self, rom):
+        for folder in lib.all_folders(self.con):
+            root = portal.host_path(folder).rstrip("/")
+            if rom.startswith(root + "/"):
+                return root
+        return os.path.dirname(rom)
+
+    def _ask_emulator_access(self, game, argv, app, rom):
+        emulator = self._detected.get(game.platform)
+        name = emulator.name if emulator and emulator.ref == app else app
+        folder = self._library_root(rom)
+        dialog = Adw.AlertDialog(
+            heading=f"{name} can’t see your games yet",
+            body=(f"{name} runs in its own sandbox, and it isn’t allowed to open "
+                  f"files in “{folder}”.\n\nDice can give it access to that folder "
+                  f"(read and write, so saves kept next to games work). You can undo "
+                  f"this in Flatseal or with “flatpak override --user --reset {app}”."))
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("once", "Share This Game Only")
+        dialog.add_response("allow", "Allow Folder")
+        dialog.set_response_appearance("allow", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("allow")
+
+        def on_response(_d, response):
+            if response == "once":
+                self._launch(game, emulators.with_file_forwarding(argv, rom))
+            elif response == "allow":
+                def work():
+                    ok = emulators.grant_access(app, folder)
+                    GLib.idle_add(done, ok)
+
+                def done(ok):
+                    if ok:
+                        self._launch(game, argv)
+                    else:
+                        self._launch_status(f"Couldn’t change {name}’s permissions", 6)
+                    return False
+
+                threading.Thread(target=work, daemon=True).start()
+
+        dialog.connect("response", on_response)
+        dialog.present(self)
+
+    def _launch(self, game, argv):
+        print("dice: launching", argv, file=sys.stderr)
         try:
             proc = Gio.Subprocess.new(emulators.host_argv(argv),
                                       Gio.SubprocessFlags.STDOUT_SILENCE
@@ -1021,6 +1092,7 @@ class DiceWindow(Adw.ApplicationWindow):
         except GLib.Error as exc:
             self._launch_status(f"Couldn't start {argv[0]}: {exc.message}", 6)
             return
+        game_id = game.id
         started = time.time()
         self._running[game_id] = started
         lib.record_launch(self.con, game_id)

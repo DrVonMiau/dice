@@ -26,7 +26,7 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import platforms
+from . import chd, platforms
 
 SECTOR = 2048
 
@@ -75,8 +75,13 @@ def clean_title(stem):
 def region_from_name(stem):
     """The first region named in the file's tags, e.g. '(USA, Europe)'."""
     for group in re.findall(r"\(([^)]*)\)", stem):
-        for word in re.split(r"[,/]\s*", group):
-            region = _REGION_WORDS.get(word.strip().lower())
+        words = [w for w in re.split(r"[,/\s]+", group) if w]
+        for word in words:
+            # Single letters ("U", "E") only count as a whole GoodTools tag,
+            # so "(Rev A)" or "(Disc 1)" never read as a region.
+            if len(word) == 1 and len(words) > 1:
+                continue
+            region = _REGION_WORDS.get(word.lower())
             if region:
                 return region
     return ""
@@ -493,15 +498,17 @@ def _sniff(path, ext):
             source = CsoSource(path)
         elif ext == ".cue":
             source = _cue_source(path)
+        elif ext == ".chd":
+            source = chd.ChdSource(path)
         else:
             return None
-    except (OSError, ValueError, struct.error):
+    except (OSError, ValueError, struct.error, chd.ChdError):
         return None
     if source is None:
         return None
     try:
         return sniff_disc(source)
-    except (OSError, ValueError, struct.error, zlib.error):
+    except (OSError, ValueError, struct.error, zlib.error, chd.ChdError):
         return None
     finally:
         source.close()
@@ -575,7 +582,7 @@ def identify(path, folder_parts=()):
         fmt = "PBP"
     else:
         fmt = ext.lstrip(".").upper()
-        if ext in (".iso", ".cso", ".cue"):
+        if ext in (".iso", ".cso", ".cue", ".chd"):
             found = _sniff(path, ext)
         if found is None:
             candidates = platforms.disc_candidates(ext) + platforms.by_extension(ext)
