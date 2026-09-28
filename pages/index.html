@@ -94,6 +94,22 @@
   .dots button:focus-visible { outline: 2px solid var(--accent); border-radius: 50%; }
   .carousel:not(.ready) .arrow, .carousel:not(.ready) .dots { display: none; }
   @media (prefers-reduced-motion: reduce) { .track { scroll-behavior: auto; } }
+  /* Copy button in the corner of a terminal snippet. */
+  .code { position: relative; }
+  .code pre { padding-right: 52px; }
+  .copy {
+    position: absolute; top: 8px; right: 8px; width: 34px; height: 34px;
+    border: 0; border-radius: 8px; cursor: pointer; display: grid; place-items: center;
+    background: var(--card); color: var(--soft); opacity: .9;
+    box-shadow: 0 1px 2px rgba(0,0,0,.1);
+  }
+  .copy:hover { color: var(--fg); opacity: 1; }
+  .copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .copy svg { width: 16px; height: 16px; }
+  .copy .done { display: none; color: var(--accent); }
+  .copy.copied .idle { display: none; }
+  .copy.copied .done { display: block; }
+  .copy:not(.ready) { display: none; }
   footer { margin-top: 24px; text-align: center; font-size: 14px; color: var(--soft); }
   @media (max-width: 480px) {
     .card { padding: 20px; }
@@ -147,9 +163,15 @@
       repository, so Dice updates like any other app.</p>
 
     <h2>Or from a terminal</h2>
+<div class="code">
 <pre>flatpak remote-add --user --if-not-exists dice \
     https://drvonmiau.github.io/dice/index.flatpakrepo
 flatpak install --user dice io.github.drvonmiau.Dice</pre>
+      <button class="copy" type="button" aria-label="Copy commands" title="Copy">
+        <svg class="idle" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+        <svg class="done" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.5 3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
     <p class="note">Updates then arrive with <code>flatpak update</code>. You need
       <a href="https://flatpak.org/setup/">Flatpak</a>, which most Linux
       distributions already have. Emulators are installed separately — for
@@ -216,6 +238,30 @@ for (const root of document.querySelectorAll(".carousel")) {
   addEventListener("resize", update);
   root.classList.add("ready");
   update();
+}
+
+// Copy buttons on terminal snippets.
+for (const btn of document.querySelectorAll(".copy")) {
+  const pre = btn.parentElement.querySelector("pre");
+  let timer;
+  btn.addEventListener("click", async () => {
+    const text = pre.textContent.trim() + "\n";
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      // Older browsers or no permission: select it so Ctrl+C works.
+      getSelection().selectAllChildren(pre);
+      return;
+    }
+    btn.classList.add("copied");
+    btn.setAttribute("aria-label", "Copied");
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      btn.classList.remove("copied");
+      btn.setAttribute("aria-label", "Copy commands");
+    }, 1500);
+  });
+  btn.classList.add("ready");
 }
 </script>
 </body>
