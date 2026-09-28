@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+	<id>io.github.drvonmiau.Dice</id>
+	<metadata_license>CC0-1.0</metadata_license>
+	<project_license>GPL-3.0-or-later</project_license>
+	<name>Dice</name>
+	<summary>Browse and launch your emulator games</summary>
+	<developer id="io.github.drvonmiau">
+		<name>Daniel</name>
+	</developer>
+	<description>
+	  <p>
+	    Dice is a calm library for the game ROMs you already own. Point it at
+	    a folder and it finds your Game Boy Advance, Nintendo DS, 3DS, PlayStation,
+	    PSP and PlayStation 2 games, shows them as a shelf of box art, and launches each one in the
+	    right emulator.
+	  </p>
+	  <p>
+	    Dice doesn't include, download or link to any games. It organises and
+	    launches backups of games you own.
+	  </p>
+	  <p>Features:</p>
+	  <ul>
+	    <li>A tab per platform, plus All and Favourites</li>
+	    <li>Reads titles, serials and regions from the ROMs themselves, including CSO and BIN/CUE images</li>
+	    <li>Cover art from images beside your ROMs, from inside PSP discs, or downloaded by name</li>
+	    <li>Finds mGBA, melonDS, Azahar, DuckStation, PPSSPP and PCSX2 automatically, or uses any command you set</li>
+	    <li>Remembers when you last played and for how long</li>
+	    <li>Multi-disc games as one card, and gamepad navigation</li>
+	  </ul>
+	</description>
+	<launchable type="desktop-id">io.github.drvonmiau.Dice.desktop</launchable>
+	<content_rating type="oars-1.1"/>
+	<branding>
+		<color type="primary" scheme_preference="light">#fde0db</color>
+		<color type="primary" scheme_preference="dark">#4a2621</color>
+	</branding>
+	<url type="homepage">https://github.com/DrVonMiau/dice</url>
+	<url type="bugtracker">https://github.com/DrVonMiau/dice/issues</url>
+	<url type="vcs-browser">https://github.com/DrVonMiau/dice</url>
+	<screenshots>
+		<screenshot type="default">
+			<image>https://raw.githubusercontent.com/DrVonMiau/dice/main/data/screenshots/library.png</image>
+			<caption>Your games on a clean paper card, one open in the side panel</caption>
+		</screenshot>
+		<screenshot>
+			<image>https://raw.githubusercontent.com/DrVonMiau/dice/main/data/screenshots/dark.png</image>
+			<caption>Favourites, in the dark theme</caption>
+		</screenshot>
+	</screenshots>
+	<requires>
+		<display_length compare="ge">768</display_length>
+	</requires>
+	<supports>
+		<control>keyboard</control>
+		<control>pointing</control>
+	</supports>
+	<releases>
+		<release version="0.1.0" date="2026-09-28">
+			<description>
+				<p>First release.</p>
+				<ul>
+					<li>GBA, Nintendo DS, 3DS, PlayStation, PSP and PlayStation 2 libraries, with a tab per platform plus Favourites and Recent</li>
+					<li>Titles, serials and regions read from ROMs and discs, including CSO, CHD and BIN/CUE</li>
+					<li>Box art from your folders, from PSP discs, or downloaded by name</li>
+					<li>One-click launching in mGBA, melonDS, Azahar, DuckStation, PPSSPP or PCSX2, with help granting Flatpak emulators access to your games</li>
+					<li>Multi-disc games as one card, gamepad navigation, and history that survives renames</li>
+				</ul>
+			</description>
+		</release>
+	</releases>
+</component>

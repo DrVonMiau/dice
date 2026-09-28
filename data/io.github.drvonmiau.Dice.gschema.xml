@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist gettext-domain="dice">
+	<schema id="io.github.drvonmiau.Dice" path="/io/github/drvonmiau/Dice/">
+		<key name="theme" type="s">
+			<choices>
+				<choice value="light"/>
+				<choice value="dark"/>
+				<choice value="system"/>
+			</choices>
+			<default>'system'</default>
+			<summary>Color theme</summary>
+			<description>Whether to use the light theme, the dark theme, or follow the system preference.</description>
+		</key>
+		<key name="window-width" type="i">
+			<default>1180</default>
+			<summary>Window width</summary>
+		</key>
+		<key name="window-height" type="i">
+			<default>760</default>
+			<summary>Window height</summary>
+		</key>
+		<key name="window-maximized" type="b">
+			<default>false</default>
+			<summary>Window maximized</summary>
+		</key>
+		<key name="last-tab" type="s">
+			<default>'all'</default>
+			<summary>Last active tab</summary>
+			<description>"all", "favourites" or a platform key such as "ps2".</description>
+		</key>
+		<key name="sort" type="s">
+			<choices>
+				<choice value="title"/>
+				<choice value="platform"/>
+				<choice value="played"/>
+				<choice value="added"/>
+				<choice value="size"/>
+			</choices>
+			<default>'title'</default>
+			<summary>Library sort order</summary>
+		</key>
+		<key name="cover-size" type="i">
+			<range min="120" max="260"/>
+			<default>170</default>
+			<summary>Target cover width in pixels</summary>
+		</key>
+		<key name="watch-folders" type="b">
+			<default>false</default>
+			<summary>Watch ROM folders</summary>
+			<description>Automatically rescan the library when files change in the ROM folders.</description>
+		</key>
+		<key name="fetch-covers" type="b">
+			<default>true</default>
+			<summary>Download missing covers</summary>
+			<description>Look up box art for games without any by file name in the libretro thumbnail archive.</description>
+		</key>
+		<key name="emulators" type="a{ss}">
+			<default>{}</default>
+			<summary>Custom emulator commands</summary>
+			<description>Platform key to launch command template; {rom} is replaced by the game path. Platforms without an entry use the emulator Dice detects.</description>
+		</key>
+	</schema>
+</schemalist>

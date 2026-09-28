@@ -1,6 +1,6 @@
-# Distributing Lyre
+# Distributing Dice
 
-Lyre isn't on Flathub (their guidelines exclude AI-assisted projects), so it
+Dice isn't on Flathub (their guidelines exclude AI-assisted projects), so it
 ships through GitHub instead. Two paths are set up, and they can coexist.
 
 ## 1. Single-file bundle on Releases (active now)
@@ -10,12 +10,12 @@ download and double-click.
 
 **How it works** — `.github/workflows/bundle.yml` runs when you push a tag
 starting with `v` (e.g. `v0.3.0`). It builds the app in the GNOME 49 Flatpak
-runtime and attaches `io.github.drvonmiau.Lyre.flatpak` to that tag's release.
+runtime and attaches `io.github.drvonmiau.Dice.flatpak` to that tag's release.
 
 **To cut a release**
 
 1. Bump the version in `meson.build` and add a `<release>` entry to
-   `data/io.github.drvonmiau.Lyre.metainfo.xml.in`.
+   `data/io.github.drvonmiau.Dice.metainfo.xml.in`.
 2. Create the release + tag on GitHub (Releases → Draft a new release → choose
    or create tag `vX.Y.Z` → Publish). Publishing the tag triggers the workflow;
    a couple of minutes later the bundle appears as a release asset.
@@ -26,8 +26,8 @@ runtime and attaches `io.github.drvonmiau.Lyre.flatpak` to that tag's release.
 **What users do**
 
 ```sh
-flatpak install --user io.github.drvonmiau.Lyre.flatpak
-flatpak run io.github.drvonmiau.Lyre
+flatpak install --user io.github.drvonmiau.Dice.flatpak
+flatpak run io.github.drvonmiau.Dice
 ```
 
 Trade-off: no automatic updates — users re-download to upgrade. That's what
@@ -49,8 +49,8 @@ push before Pages exists.
 1. **Settings → Pages → Source: "GitHub Actions".**
 2. *(Recommended)* Sign the repo so users don't need `--no-gpg-verify`:
    ```sh
-   gpg --quick-gen-key "Lyre <you@example.com>"
-   gpg --armor --export <KEYID> > lyre.gpg                 # public — ship this
+   gpg --quick-gen-key "Dice <you@example.com>"
+   gpg --armor --export <KEYID> > dice.gpg                 # public — ship this
    gpg --armor --export-secret-keys <KEYID>                # private — copy output
    ```
    Add two repo secrets — `FLATPAK_GPG_KEY` (the private-key block) and
@@ -59,11 +59,11 @@ push before Pages exists.
 3. In the workflow, uncomment the `push: branches: [main]` trigger so every push
    republishes the repo.
 
-**What users do** (once your Pages URL is live, e.g. `https://drvonmiau.github.io/lyre`)
+**What users do** (once your Pages URL is live, e.g. `https://drvonmiau.github.io/dice`)
 
 ```sh
-flatpak remote-add --user lyre https://drvonmiau.github.io/lyre/index.flatpakrepo
-flatpak install --user lyre io.github.drvonmiau.Lyre
+flatpak remote-add --user dice https://drvonmiau.github.io/dice/index.flatpakrepo
+flatpak install --user dice io.github.drvonmiau.Dice
 ```
 
 From then on `flatpak update` pulls new versions automatically. This is the

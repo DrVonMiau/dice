@@ -1,9 +1,9 @@
 pkgdatadir = get_option('prefix') / get_option('datadir') / meson.project_name()
-moduledir = pkgdatadir / 'lyre'
+moduledir = pkgdatadir / 'dice'
 gnome = import('gnome')
 
-gnome.compile_resources('lyre',
-  'lyre.gresource.xml',
+gnome.compile_resources('dice',
+  'dice.gresource.xml',
   gresource_bundle: true,
   install: true,
   install_dir: pkgdatadir,
@@ -18,24 +18,29 @@ conf.set('localedir', get_option('prefix') / get_option('localedir'))
 conf.set('pkgdatadir', pkgdatadir)
 
 configure_file(
-  input: 'lyre.in',
-  output: 'lyre',
+  input: 'dice.in',
+  output: 'dice',
   configuration: conf,
   install: true,
   install_dir: get_option('bindir'),
   install_mode: 'r-xr-xr-x'
 )
 
-lyre_sources = [
+dice_sources = [
   '__init__.py',
   'main.py',
   'window.py',
   'library.py',
-  'metadata.py',
+  'romscan.py',
+  'platforms.py',
+  'emulators.py',
+  'covers.py',
+  'portal.py',
+  'chd.py',
+  'gamepad.py',
+  'datfiles.py',
   'models.py',
-  'mpris.py',
-  'player.py',
   'widgets.py',
 ]
 
-install_data(lyre_sources, install_dir: moduledir)
+install_data(dice_sources, install_dir: moduledir)

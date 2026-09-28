@@ -8,35 +8,17 @@
         <property name="max-height">12</property>
         <child>
           <object class="GtkShortcutsGroup">
-            <property name="title" translatable="yes" context="shortcut window">Playback</property>
+            <property name="title" translatable="yes" context="shortcut window">Games</property>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes" context="shortcut window">Play / Pause</property>
-                <property name="accelerator">space</property>
+                <property name="title" translatable="yes" context="shortcut window">Play the selected game</property>
+                <property name="accelerator">Return</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes" context="shortcut window">Next track</property>
-                <property name="accelerator">&lt;Primary&gt;Right</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes" context="shortcut window">Previous track</property>
-                <property name="accelerator">&lt;Primary&gt;Left</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes" context="shortcut window">Volume up / down</property>
-                <property name="accelerator">&lt;Primary&gt;Up &lt;Primary&gt;Down</property>
-              </object>
-            </child>
-            <child>
-              <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes" context="shortcut window">Mute</property>
-                <property name="accelerator">&lt;Primary&gt;m</property>
+                <property name="title" translatable="yes" context="shortcut window">Close the side panel</property>
+                <property name="accelerator">Escape</property>
               </object>
             </child>
           </object>
@@ -52,8 +34,20 @@
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes" context="shortcut window">Switch tab</property>
-                <property name="accelerator">&lt;Primary&gt;1...4</property>
+                <property name="title" translatable="yes" context="shortcut window">Switch to tab 1–9</property>
+                <property name="accelerator">&lt;Primary&gt;1</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes" context="shortcut window">Add ROM folder</property>
+                <property name="accelerator">&lt;Primary&gt;o</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes" context="shortcut window">Rescan library</property>
+                <property name="accelerator">&lt;Primary&gt;r</property>
               </object>
             </child>
           </object>
@@ -63,14 +57,20 @@
             <property name="title" translatable="yes" context="shortcut window">General</property>
             <child>
               <object class="GtkShortcutsShortcut">
-                <property name="title" translatable="yes" context="shortcut window">Show Shortcuts</property>
-                <property name="action-name">win.show-help-overlay</property>
+                <property name="title" translatable="yes" context="shortcut window">Preferences</property>
+                <property name="accelerator">&lt;Primary&gt;comma</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkShortcutsShortcut">
+                <property name="title" translatable="yes" context="shortcut window">Keyboard shortcuts</property>
+                <property name="accelerator">&lt;Primary&gt;question</property>
               </object>
             </child>
             <child>
               <object class="GtkShortcutsShortcut">
                 <property name="title" translatable="yes" context="shortcut window">Quit</property>
-                <property name="action-name">app.quit</property>
+                <property name="accelerator">&lt;Primary&gt;q</property>
               </object>
             </child>
           </object>
