@@ -52,16 +52,54 @@
   .note { color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
   .card { min-width: 0; }
   pre { max-width: 100%; }
-  .shots { display: grid; gap: 20px; margin: 24px 0 8px; }
-  figure { margin: 0; }
-  figure img {
+  /* Screenshot carousel: native horizontal scroll with snap points, so
+     swipe and trackpad work without JS; the next slide peeks in at the edge.
+     JS only adds the arrows, dots and arrow-key handling. */
+  .carousel { position: relative; margin: 24px -32px 8px; }
+  .track {
+    display: flex; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory;
+    scroll-padding: 0 32px; padding: 4px 32px 16px; scrollbar-width: none;
+    overscroll-behavior-x: contain;
+  }
+  .track::-webkit-scrollbar { display: none; }
+  .track:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 12px; }
+  .slide { flex: 0 0 86%; margin: 0; scroll-snap-align: start; }
+  .slide img {
     display: block; width: 100%; height: auto; border-radius: 12px;
     box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.12);
   }
   figcaption { margin-top: 8px; font-size: 14px; color: var(--soft); text-align: center; }
+  .arrow {
+    position: absolute; top: calc(50% - 30px); width: 40px; height: 40px;
+    border: 0; border-radius: 50%; cursor: pointer; display: grid; place-items: center;
+    background: var(--card); color: var(--fg); opacity: .92;
+    box-shadow: 0 1px 2px rgba(0,0,0,.1), 0 4px 12px rgba(0,0,0,.18);
+    transition: opacity .15s;
+  }
+  .arrow:hover { opacity: 1; }
+  .arrow:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .arrow[disabled] { opacity: 0; pointer-events: none; }
+  .arrow.prev { left: 12px; } .arrow.next { right: 12px; }
+  .arrow svg { width: 18px; height: 18px; }
+  .dots { display: flex; justify-content: center; gap: 4px; }
+  .dots button {
+    width: 24px; height: 24px; border: 0; padding: 0; background: none; cursor: pointer;
+    display: grid; place-items: center;
+  }
+  .dots button::after {
+    content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--line);
+    transition: background .15s, transform .15s;
+  }
+  .dots button[aria-current="true"]::after { background: var(--accent); transform: scale(1.25); }
+  .dots button:focus-visible { outline: 2px solid var(--accent); border-radius: 50%; }
+  .carousel:not(.ready) .arrow, .carousel:not(.ready) .dots { display: none; }
+  @media (prefers-reduced-motion: reduce) { .track { scroll-behavior: auto; } }
   footer { margin-top: 24px; text-align: center; font-size: 14px; color: var(--soft); }
   @media (max-width: 480px) {
     .card { padding: 20px; }
+    .carousel { margin-left: -20px; margin-right: -20px; }
+    .track { scroll-padding: 0 20px; padding-left: 20px; padding-right: 20px; }
+    .arrow { display: none; }
     header { flex-direction: column; align-items: flex-start; }
   }
 </style>
@@ -81,18 +119,27 @@
       games, shows them with their box art, and launches each one in the right
       emulator.</p>
 
-    <div class="shots">
-      <figure>
-        <img src="dice-library.png" width="1200" height="876"
-             alt="Dice showing a library of GBA, DS, PS1 and PS2 games, with one game open in the side panel">
-        <figcaption>Your games as a shelf of box art — pick one, press Play.</figcaption>
-      </figure>
-      <figure>
-        <img src="dice-dark.png" width="1200" height="876" loading="lazy"
-             alt="The Favourites tab in the dark theme">
-        <figcaption>Favourites, in the dark theme.</figcaption>
-      </figure>
-    </div>
+    <section class="carousel" aria-roledescription="carousel" aria-label="Screenshots">
+      <div class="track" tabindex="0">
+        <figure class="slide" aria-roledescription="slide" aria-label="1 of 2">
+          <img src="dice-library.png" width="1200" height="876"
+               alt="Dice showing a library of GBA, DS, PS1 and PS2 games, with one game open in the side panel">
+          <figcaption>Your games as a shelf of box art — pick one, press Play.</figcaption>
+        </figure>
+        <figure class="slide" aria-roledescription="slide" aria-label="2 of 2">
+          <img src="dice-dark.png" width="1200" height="876" loading="lazy"
+               alt="The Favourites tab in the dark theme">
+          <figcaption>Favourites, in the dark theme.</figcaption>
+        </figure>
+      </div>
+      <button class="arrow prev" type="button" aria-label="Previous screenshot">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <button class="arrow next" type="button" aria-label="Next screenshot">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="dots"></div>
+    </section>
 
     <h2>Install</h2>
     <p><a class="button" href="io.github.drvonmiau.Dice.flatpakref">Install with GNOME Software</a></p>
@@ -119,5 +166,57 @@ flatpak install --user dice io.github.drvonmiau.Dice</pre>
     <a href="https://github.com/DrVonMiau/quill">Quill</a>
   </footer>
 </main>
+<script>
+// Screenshot carousel. Scrolling is native (swipe, trackpad, scroll-snap);
+// this only wires up the arrows, the dots and the arrow keys.
+for (const root of document.querySelectorAll(".carousel")) {
+  const track = root.querySelector(".track");
+  const slides = [...track.children];
+  const prev = root.querySelector(".prev");
+  const next = root.querySelector(".next");
+  const dotBox = root.querySelector(".dots");
+  const smooth = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  const dots = slides.map((_, i) => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.setAttribute("aria-label", `Show screenshot ${i + 1}`);
+    b.addEventListener("click", () => go(i));
+    dotBox.append(b);
+    return b;
+  });
+  // Index of the slide whose left edge is nearest the track's snap edge.
+  const current = () => {
+    const pad = parseFloat(getComputedStyle(track).scrollPaddingLeft) || 0;
+    let best = 0, dist = Infinity;
+    slides.forEach((s, i) => {
+      const d = Math.abs(s.offsetLeft - pad - track.scrollLeft);
+      if (d < dist) { dist = d; best = i; }
+    });
+    return best;
+  };
+  const go = (i) => {
+    i = Math.max(0, Math.min(slides.length - 1, i));
+    const pad = parseFloat(getComputedStyle(track).scrollPaddingLeft) || 0;
+    track.scrollTo({ left: slides[i].offsetLeft - pad, behavior: smooth });
+  };
+  const update = () => {
+    const i = current();
+    const end = track.scrollLeft >= track.scrollWidth - track.clientWidth - 2;
+    dots.forEach((d, j) => d.setAttribute("aria-current", j === i ? "true" : "false"));
+    prev.disabled = track.scrollLeft <= 2;
+    next.disabled = end;
+  };
+  prev.addEventListener("click", () => go(current() - 1));
+  next.addEventListener("click", () => go(current() + 1));
+  track.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowLeft") { e.preventDefault(); go(current() - 1); }
+    if (e.key === "ArrowRight") { e.preventDefault(); go(current() + 1); }
+  });
+  track.addEventListener("scroll", () => requestAnimationFrame(update), { passive: true });
+  addEventListener("resize", update);
+  root.classList.add("ready");
+  update();
+}
+</script>
 </body>
 </html>
