@@ -38,6 +38,16 @@
 	<url type="homepage">https://github.com/DrVonMiau/dice</url>
 	<url type="bugtracker">https://github.com/DrVonMiau/dice/issues</url>
 	<url type="vcs-browser">https://github.com/DrVonMiau/dice</url>
+	<screenshots>
+		<screenshot type="default">
+			<image>https://raw.githubusercontent.com/DrVonMiau/dice/main/data/screenshots/library.png</image>
+			<caption>Your games on a clean paper card, one open in the side panel</caption>
+		</screenshot>
+		<screenshot>
+			<image>https://raw.githubusercontent.com/DrVonMiau/dice/main/data/screenshots/dark.png</image>
+			<caption>Favourites, in the dark theme</caption>
+		</screenshot>
+	</screenshots>
 	<requires>
 		<display_length compare="ge">768</display_length>
 	</requires>

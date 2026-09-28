@@ -21,6 +21,7 @@ is often upper-case or truncated.
 import os
 import re
 import struct
+import unicodedata
 import zipfile
 import zlib
 from dataclasses import dataclass
@@ -59,6 +60,18 @@ _REGION_WORDS = {
 }
 
 
+def title_key(title):
+    """A comparable form of a title, for spotting the same game under two
+    spellings: 'Kirby & The Amazing Mirror' and 'Kirby and the Amazing
+    Mirror', or 'Legend of Zelda, The' and 'The Legend of Zelda', match."""
+    title = clean_title(title)
+    title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
+    title = title.lower().replace("&", " and ")
+    title = re.sub(r"^(the|a|an)\s+", "", title)
+    title = re.sub(r"[^a-z0-9]+", " ", title)
+    return re.sub(r"\s+", " ", title).strip()
+
+
 def clean_title(stem):
     """'Legend of Zelda, The - The Minish Cap (USA) [!]' ->
     'The Legend of Zelda - The Minish Cap'."""
@@ -66,6 +79,9 @@ def clean_title(stem):
     if " " not in title:
         title = title.replace("_", " ").replace(".", " ")
     title = re.sub(r"\s+", " ", title).strip() or stem
+    # Release-group dumps carry a catalogue number: "1514 - Legend of Zelda".
+    # Only four digits: "007 - Everything or Nothing" is a real title.
+    title = re.sub(r"^\d{4} - (?=\S)", "", title)
     match = _ARTICLE_RE.match(title)
     if match:
         title = f"{match.group(2)} {match.group(1)}{match.group(3) or ''}"

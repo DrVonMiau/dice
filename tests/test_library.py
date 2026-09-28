@@ -44,6 +44,30 @@ class DiscGroupingTests(unittest.TestCase):
         self.assertEqual((len(shown), discs), (1, {}))
 
 
+class DuplicateTests(unittest.TestCase):
+    @staticmethod
+    def row(i, title, platform="gba", size=100, serial="", path=None):
+        return {"id": i, "title": title, "platform": platform, "size": size,
+                "serial": serial, "path": path or f"/r/{i}.gba"}
+
+    def test_spelling_variants_are_one_game(self):
+        rows = [self.row(1, "Kirby & The Amazing Mirror", size=8),
+                self.row(2, "Kirby And The Amazing Mirror", size=16),
+                self.row(3, "Golden Sun")]
+        groups = lib.find_duplicates(rows)
+        self.assertEqual([[r["id"] for r in g] for g, _same in groups], [[1, 2]])
+        self.assertFalse(groups[0][1])
+
+    def test_identical_copies_are_flagged(self):
+        rows = [self.row(1, "Golden Sun", serial="AGB-AGSE"),
+                self.row(2, "Golden Sun", serial="AGB-AGSE")]
+        self.assertTrue(lib.find_duplicates(rows)[0][1])
+
+    def test_same_title_on_two_platforms_is_fine(self):
+        rows = [self.row(1, "Tetris", "gba"), self.row(2, "Tetris", "nds")]
+        self.assertEqual(lib.find_duplicates(rows), [])
+
+
 class LibraryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()

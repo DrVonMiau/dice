@@ -17,6 +17,10 @@
         <attribute name="label" translatable="yes">Find Missing Covers</attribute>
         <attribute name="action">win.find-covers</attribute>
       </item>
+      <item>
+        <attribute name="label" translatable="yes">Find Duplicates…</attribute>
+        <attribute name="action">win.find-duplicates</attribute>
+      </item>
     </section>
     <section>
       <item>

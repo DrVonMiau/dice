@@ -10,7 +10,7 @@
 </p>
 
 <p align="center">
-  <img src="data/screenshots/library.png" width="820" alt="Dice showing a game library with the side panel open">
+  <img src="data/screenshots/library.png" width="820" alt="Dice showing a library of GBA, DS, PS1 and PS2 games with a game open in the side panel">
 </p>
 
 Dice keeps the ROMs you already own in one tidy shelf. Add a folder and it
@@ -19,10 +19,8 @@ one is for, reads what it can from the file itself, and launches it in the
 right emulator. It only ever *reads* your folders.
 
 <p align="center">
-  <img src="data/screenshots/dark.png" width="820" alt="The PSP tab in the dark theme">
+  <img src="data/screenshots/dark.png" width="820" alt="Favourites in the dark theme">
 </p>
-
-> The screenshots use a synthetic test library (generated box art), not real games.
 
 > [!IMPORTANT]
 > Dice doesn't include, download or link to any games. It organises and
@@ -34,6 +32,9 @@ right emulator. It only ever *reads* your folders.
 - **A tab per platform** — All, then GBA, NDS, 3DS, PS1, PSP, PS2 (only the ones you have), then Favourites and Recent
 - **Multi-disc games are one card**: an `.m3u` playlist, or files named "(Disc 1)", "(Disc 2)"… — start any disc from the side panel
 - **Rename or move files freely**: a game keeps its favourite, play history and cover
+- **Find Duplicates** lists games you have more than once — including different
+  spellings like "Kirby & The Amazing Mirror" and "Kirby And The Amazing Mirror" —
+  and tells identical copies from different releases
 - **Gamepad navigation** — D-pad to browse, A to play, B to go back, Y to favourite, LB/RB to switch tabs
 - **Knows what's inside**: GBA and DS cartridge headers and 3DS product
   codes (game code, region), PSP

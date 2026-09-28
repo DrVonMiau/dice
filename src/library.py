@@ -56,7 +56,7 @@ COVER_DIRS = ("", "covers", "Covers", "boxart", "Boxart", "images",
 
 # Bump when detection changes, so a rescan re-identifies files it would
 # otherwise skip as unchanged (e.g. PS1 discs once filed as PS2).
-SCAN_VERSION = 3
+SCAN_VERSION = 4
 
 
 def connect():
@@ -304,6 +304,31 @@ def group_discs(rows):
         discs[first["id"]] = [(n, r["id"]) for n, r in members]
         hidden.update(r["id"] for _n, r in members[1:])
     return [r for r in rows if r["id"] not in hidden], discs
+
+
+# ------------------------------------------------------------ duplicates ----
+
+def find_duplicates(rows):
+    """Games that look like the same game more than once, per platform:
+    titles that match once spelling, articles and '&'/'and' are set aside
+    (see romscan.title_key). Returns [(rows, identical)] sorted by title,
+    where `identical` means every copy has the same size and serial — the
+    same dump twice — rather than, say, a USA and a Europe release.
+    Pass the rows shown in the library (after group_discs), so the discs of
+    one game don't count as duplicates of each other."""
+    groups = {}
+    for r in rows:
+        key = (r["platform"], romscan.title_key(r["title"]))
+        if key[1]:
+            groups.setdefault(key, []).append(r)
+    out = []
+    for key in sorted(groups, key=lambda k: (k[1], k[0])):
+        members = groups[key]
+        if len(members) < 2:
+            continue
+        fingerprints = {(m["size"], m["serial"] or "") for m in members}
+        out.append((sorted(members, key=lambda m: m["path"]), len(fingerprints) == 1))
+    return out
 
 
 # -------------------------------------------------------------- scanning ----

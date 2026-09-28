@@ -141,6 +141,19 @@ class TitleTests(unittest.TestCase):
             romscan.clean_title("Legend of Zelda, The - The Minish Cap (USA) [!]"),
             "The Legend of Zelda - The Minish Cap")
 
+    def test_catalogue_numbers_are_dropped(self):
+        self.assertEqual(romscan.clean_title(
+            "1514 - Legend of Zelda - Phantom Hourglass, The (E)(EXiMiUS)"),
+            "The Legend of Zelda - Phantom Hourglass")
+        self.assertEqual(romscan.clean_title("007 - Everything or Nothing (Japan)"),
+                         "007 - Everything or Nothing")
+
+    def test_title_key(self):
+        self.assertEqual(romscan.title_key("Kirby And The Amazing Mirror"),
+                         romscan.title_key("Kirby & the amazing mirror"))
+        self.assertEqual(romscan.title_key("Legend of Zelda, The - Minish Cap (USA)"),
+                         romscan.title_key("The Legend of Zelda: Minish Cap"))
+
     def test_clean_title_underscores(self):
         self.assertEqual(romscan.clean_title("golden_sun"), "golden sun")
 

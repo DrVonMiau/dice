@@ -16,7 +16,6 @@ Art next to the ROM, art inside the disc and covers the user picked always
 win; this is only for games with nothing else (see library.py).
 """
 import re
-import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -40,14 +39,9 @@ def thumbnail_name(name):
 
 
 def normalise(title):
-    """A comparable form of a title: 'The Legend of Zelda: Minish Cap' and
-    'Legend of Zelda, The - Minish Cap' both → 'legend of zelda minish cap'."""
-    title = romscan.clean_title(title)
-    title = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
-    title = title.lower().replace("&", " and ")
-    title = re.sub(r"^(the|a|an)\s+", "", title)
-    title = re.sub(r"[^a-z0-9]+", " ", title)
-    return re.sub(r"\s+", " ", title).strip()
+    """'The Legend of Zelda: Minish Cap' and 'Legend of Zelda, The - Minish
+    Cap' both → 'legend of zelda minish cap' (see romscan.title_key)."""
+    return romscan.title_key(title)
 
 
 def _region_rank(name, region):

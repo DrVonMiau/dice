@@ -279,6 +279,7 @@ class DiceWindow(Adw.ApplicationWindow):
             ("add-folder", lambda *_a: self._on_add_folder()),
             ("rescan", lambda *_a: self._on_rescan()),
             ("find-covers", lambda *_a: self._find_missing_covers()),
+            ("find-duplicates", lambda *_a: self._show_duplicates()),
             ("preferences", lambda *_a: self._on_preferences()),
             ("find", lambda *_a: self.search_toggle_btn.set_active(
                 not self.search_toggle_btn.get_active())),
@@ -1128,6 +1129,74 @@ class DiceWindow(Adw.ApplicationWindow):
 
         self._cover_worker = threading.Thread(target=work, daemon=True)
         self._cover_worker.start()
+
+    # -------------------------------------------------------- duplicates --
+
+    def _show_duplicates(self):
+        """List games that appear more than once. Dice never deletes files:
+        each copy can be shown in the file manager, or opened in the library."""
+        shown = [self._rows[g.id] for g in self._games]
+        groups = lib.find_duplicates(shown)
+        if not groups:
+            self._toast("No duplicates found")
+            return
+        dialog = Adw.PreferencesDialog(title="Possible Duplicates")
+        page = Adw.PreferencesPage()
+        copies = sum(len(rows) for rows, _same in groups)
+        intro = Adw.PreferencesGroup(
+            description=f"{len(groups)} game{'s' if len(groups) != 1 else ''} appear "
+                        f"more than once ({copies} files). Dice doesn’t delete anything: "
+                        "use Show in Files to tidy up, then Rescan.")
+        page.add(intro)
+        for rows, identical in groups:
+            platform = platforms.label(rows[0]["platform"])
+            group = Adw.PreferencesGroup(
+                title=GLib.markup_escape_text(f"{rows[0]['title']} · {platform}"),
+                description=("Identical copies — the same file more than once"
+                             if identical else
+                             "Same title — different regions, versions or dumps?"))
+            for r in rows:
+                folder = self._short_folder(r["path"])
+                bits = [b for b in (r["region"], r["format"], _fmt_size(r["size"]),
+                                    r["serial"]) if b]
+                row = Adw.ActionRow(
+                    title=GLib.markup_escape_text(os.path.basename(r["path"])),
+                    subtitle=GLib.markup_escape_text(" · ".join(bits) + "\n" + folder),
+                    subtitle_lines=2, activatable=True)
+                row.set_tooltip_text("Open in the library")
+                row.connect("activated", lambda _r, gid=r["id"], d=dialog:
+                            (d.close(), self._reveal_game(gid)))
+                btn = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER,
+                                 tooltip_text="Show in Files", css_classes=["flat"])
+                btn.connect("clicked", lambda _b, p=r["path"]: self._open_in_files(p))
+                row.add_suffix(btn)
+                group.add(row)
+            page.add(group)
+        dialog.add(page)
+        dialog.present(self)
+
+    def _short_folder(self, path):
+        """A game's folder relative to its library folder: 'My ROMs/GBA/old'."""
+        folder = os.path.dirname(path)
+        for root in lib.all_folders(self.con):
+            root = root.rstrip("/")
+            if folder == root or folder.startswith(root + "/"):
+                return os.path.join(os.path.basename(root), os.path.relpath(folder, root)
+                                    ).rstrip("/.") or os.path.basename(root)
+        return folder
+
+    def _reveal_game(self, game_id):
+        """Select a game in the All tab and scroll it into view."""
+        if game_id not in self._by_id:
+            return
+        if self.search_toggle_btn.get_active():
+            self.search_toggle_btn.set_active(False)
+        self._select_tab("all")
+        for index in range(self.store.get_n_items()):
+            if self.store.get_item(index).id == game_id:
+                self._select(game_id)
+                self.game_grid.scroll_to(index, Gtk.ListScrollFlags.NONE, None)
+                break
 
     # ------------------------------------------------------------ playing --
 
