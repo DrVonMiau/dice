@@ -47,8 +47,11 @@ right emulator. It only ever *reads* your folders.
 - Images named like the ROM, next to it or in a `covers/`, `boxart/`,
   `media/covers/` or `Named_Boxarts/` folder
 - The icon **inside PSP discs**
-- **Downloaded by name** from the libretro thumbnail archive for anything
-  else (can be turned off)
+- **Downloaded** from the libretro thumbnail archive for anything else —
+  matched by the game's serial or checksum, then by file name, then by title,
+  so oddly named files still find their box. **Find Missing Covers** in the
+  menu retries everything still without art (automatic downloads can be
+  turned off)
 - Or pick any image yourself — a hand-picked cover always wins
 
 **Playing**

@@ -17,7 +17,7 @@ from datetime import datetime
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
-from . import covers, emulators, platforms, portal
+from . import covers, datfiles, emulators, platforms, portal
 from . import library as lib
 from .gamepad import Gamepads
 from .models import Game
@@ -278,6 +278,7 @@ class DiceWindow(Adw.ApplicationWindow):
         simple = (
             ("add-folder", lambda *_a: self._on_add_folder()),
             ("rescan", lambda *_a: self._on_rescan()),
+            ("find-covers", lambda *_a: self._find_missing_covers()),
             ("preferences", lambda *_a: self._on_preferences()),
             ("find", lambda *_a: self.search_toggle_btn.set_active(
                 not self.search_toggle_btn.get_active())),
@@ -1030,19 +1031,29 @@ class DiceWindow(Adw.ApplicationWindow):
         if game_id == self._selected_id:
             self._show_info(game_id)
 
+    @staticmethod
+    def _fetch_cover_for(row, dbs):
+        """Box art for a library row (see covers.fetch). Blocking."""
+        size = row["size"] if (row["format"] or "") == "ISO" else None
+        return covers.fetch(row["platform"], row["path"], title=row["title"],
+                            region=row["region"] or "", serial=row["serial"] or "",
+                            size=size, dbs=dbs)
+
     def _fetch_cover_now(self, game_id):
-        game = self._by_id.get(game_id)
-        if game is None:
+        if game_id is None or self._by_id.get(game_id) is None:
             return
         self._toast("Looking for cover art…")
 
         def work():
-            data = covers.fetch(game.platform, game.path)
             con = lib.connect()
-            path = lib.set_online_cover(con, game_id, data) if data else None
-            if not data:
-                lib.mark_cover_checked(con, game_id)
-            con.close()
+            try:
+                row = lib.get_game(con, game_id)
+                data = self._fetch_cover_for(row, datfiles.Databases(quiet=True)) if row else None
+                path = lib.set_online_cover(con, game_id, data) if data else None
+                if not data:
+                    lib.mark_cover_checked(con, game_id)
+            finally:
+                con.close()
             GLib.idle_add(done, path)
 
         def done(path):
@@ -1057,29 +1068,63 @@ class DiceWindow(Adw.ApplicationWindow):
 
     # ---------------------------------------------------------- covers --
 
-    def _start_cover_worker(self):
-        """Fill in missing covers from the libretro archive in the background,
-        one game at a time, so they pop into the grid as they arrive."""
-        if not self.settings.get_boolean("fetch-covers"):
+    def _find_missing_covers(self):
+        """Menu: look up box art for every game without any — and for PSP
+        games showing only their small disc icon — with live progress."""
+        if self._cover_worker is not None and self._cover_worker.is_alive():
+            self._toast("Already looking for covers…")
+            return
+        rows = lib.games_needing_covers(self.con, retry=True)
+        if not rows:
+            self._toast("Every game already has a cover")
+            return
+        toast = self._toast(f"Finding covers… 0 of {len(rows)}", 0)
+        self._start_cover_worker(rows=rows, toast=toast)
+
+    def _start_cover_worker(self, rows=None, toast=None):
+        """Fill in missing covers in the background, one game at a time, so
+        they pop into the grid as they arrive. Without `rows` this is the
+        automatic pass (Preferences › Download missing covers)."""
+        manual = rows is not None
+        if not manual and not self.settings.get_boolean("fetch-covers"):
             return
         if self._cover_worker is not None and self._cover_worker.is_alive():
             return
 
+        def progress(done, total, found):
+            if toast is not None:
+                toast.set_title(f"Finding covers… {done} of {total} ({found} found)")
+            return False
+
+        def finish(total, found):
+            if toast is not None:
+                toast.dismiss()
+                missing = total - found
+                self._toast(f"Found {found} cover{'s' if found != 1 else ''}"
+                            + (f" — {missing} still missing; Set Cover Image… "
+                               "works for those" if missing else ""))
+            return False
+
         def work():
             con = lib.connect()
+            dbs = datfiles.Databases(quiet=True)
+            todo = rows if manual else lib.games_needing_covers(con)
+            found = 0
             try:
-                for row in lib.games_needing_covers(con):
-                    if not self.settings.get_boolean("fetch-covers"):
+                for index, row in enumerate(todo, start=1):
+                    if not manual and not self.settings.get_boolean("fetch-covers"):
                         break
-                    data = covers.fetch(row["platform"], row["path"])
-                    if data:
-                        path = lib.set_online_cover(con, row["id"], data)
-                        if path:
-                            GLib.idle_add(self._set_game_cover, row["id"], path)
+                    data = self._fetch_cover_for(row, dbs)
+                    path = lib.set_online_cover(con, row["id"], data) if data else None
+                    if path:
+                        found += 1
+                        GLib.idle_add(self._set_game_cover, row["id"], path)
                     else:
                         lib.mark_cover_checked(con, row["id"])
+                    GLib.idle_add(progress, index, len(todo), found)
             finally:
                 con.close()
+                GLib.idle_add(finish, len(todo), found)
 
         self._cover_worker = threading.Thread(target=work, daemon=True)
         self._cover_worker.start()

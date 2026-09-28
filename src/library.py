@@ -246,7 +246,15 @@ def mark_cover_checked(con, game_id):
     con.commit()
 
 
-def games_needing_covers(con):
+def games_needing_covers(con, retry=False):
+    """Games without art that haven't been looked up yet. retry=True (the
+    menu's Find Missing Covers) also retries earlier misses, and includes
+    games showing only art pulled from the disc (a PSP icon), since real box
+    art is better."""
+    if retry:
+        return con.execute(
+            "SELECT * FROM games WHERE cover_path='' OR cover_source='embedded' "
+            "ORDER BY title COLLATE NOCASE").fetchall()
     return con.execute(
         "SELECT * FROM games WHERE cover_path='' AND cover_checked=0").fetchall()
 

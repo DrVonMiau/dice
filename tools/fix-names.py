@@ -19,7 +19,7 @@ Files that don't match — hacks, translations, bad dumps — are reported and l
 alone. Saves, states and cover images named like a ROM move with it. --apply
 writes fix-names-undo-<time>.sh into the folder, which reverses everything.
 The databases are the DAT files the libretro project mirrors on GitHub, cached
-in ~/.cache/dice/dats. Only standard-library Python is needed.
+in ~/.cache/dice/dats (see src/datfiles.py). Only standard-library Python is needed.
 """
 import argparse
 import os
@@ -27,116 +27,26 @@ import re
 import shlex
 import sys
 import time
-import urllib.parse
-import urllib.request
-import zipfile
-import zlib
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from src import chd, romscan  # noqa: E402
+from src import chd, datfiles, romscan  # noqa: E402
 
-DAT_URL = "https://raw.githubusercontent.com/libretro/libretro-database/master/metadat/{}/{}.dat"
-CARTRIDGES = {".gba": "Nintendo - Game Boy Advance", ".nds": "Nintendo - Nintendo DS"}
 DISC_EXT = {".iso", ".cso", ".chd", ".cue"}
-DISCS = {"ps1": "Sony - PlayStation", "ps2": "Sony - PlayStation 2",
-         "psp": "Sony - PlayStation Portable"}
+DISCS = {k: v[1] for k, v in datfiles.SYSTEMS.items() if v[0] == "redump"}
 COMPANION_EXT = {".sav", ".srm", ".cheats", ".png", ".jpg", ".jpeg", ".webp",
                  ".mcr", ".mcd"} | {f".ss{i}" for i in range(10)}
 COVER_DIRS = ("covers", "Covers", "boxart", "Boxart", "images", "media/covers",
               "media/box2dfront", "Named_Boxarts")
-CACHE = Path(os.environ.get("XDG_CACHE_HOME", Path.home() / ".cache")) / "dice" / "dats"
-
-_GAME_RE = re.compile(r'^game \(\s*\n(.*?)^\)', re.M | re.S)
-_NAME_RE = re.compile(r'^\s*name "((?:[^"\\]|\\.)*)"', re.M)
-_SERIAL_RE = re.compile(r'^\s*serial "([^"]*)"', re.M)
-_ROM_RE = re.compile(r'rom \( name "((?:[^"\\]|\\.)*)" size (\d+) crc ([0-9A-Fa-f]{8})')
-
-
-# --------------------------------------------------------------- databases --
-
-def load_dat(system, source, dat_dir=None):
-    """[(game name, serials, [(rom name, size, crc)])] from a DAT file."""
-    if dat_dir:
-        path = Path(dat_dir) / f"{system}.dat"
-    else:
-        CACHE.mkdir(parents=True, exist_ok=True)
-        path = CACHE / f"{source}-{system}.dat"
-        if not path.exists():
-            print(f"Downloading the {system} database…", file=sys.stderr)
-            url = DAT_URL.format(source, urllib.parse.quote(system))
-            with urllib.request.urlopen(url, timeout=120) as response:
-                path.write_bytes(response.read())
-    text = path.read_text(encoding="utf-8", errors="replace")
-    games = []
-    for block in _GAME_RE.finditer(text):
-        body = block.group(1)
-        name = _NAME_RE.search(body)
-        if not name:
-            continue
-        serials = set()
-        for value in _SERIAL_RE.findall(body):
-            serials.update(s.upper() for s in re.split(r"[,\s]+", value) if s)
-        roms = [(r[0], int(r[1]), r[2].upper()) for r in _ROM_RE.findall(body)]
-        games.append((name.group(1), serials, roms))
-    return games
-
-
-class Databases:
-    def __init__(self, dat_dir=None):
-        self.dat_dir = dat_dir
-        self._crc = {}
-        self._serial = {}
-
-    def by_crc(self, system):
-        if system not in self._crc:
-            table = {}
-            for name, _serials, roms in load_dat(system, "no-intro", self.dat_dir):
-                for _rom, size, crc in roms:
-                    table.setdefault(crc, (name, size))
-            self._crc[system] = table
-        return self._crc[system]
-
-    def by_serial(self, system):
-        if system not in self._serial:
-            table = {}
-            for name, serials, roms in load_dat(system, "redump", self.dat_dir):
-                entry = (name, sum(r[1] for r in roms))
-                for serial in serials:
-                    if entry not in table.setdefault(serial, []):
-                        table[serial].append(entry)
-            self._serial[system] = table
-        return self._serial[system]
-
-
-# ------------------------------------------------------------------ files --
-
-def file_crc(path):
-    crc = 0
-    with open(path, "rb") as fh:
-        for chunk in iter(lambda: fh.read(1 << 20), b""):
-            crc = zlib.crc32(chunk, crc)
-    return f"{crc & 0xFFFFFFFF:08X}"
 
 
 def cartridge(path):
-    """(system, crc, size) for a GBA/DS ROM or a zip holding one, else None.
-    Zips report the CRC their directory already stores: nothing is unpacked."""
-    ext = path.suffix.lower()
-    if ext in CARTRIDGES:
-        return CARTRIDGES[ext], file_crc(path), path.stat().st_size
-    if ext == ".zip":
-        try:
-            with zipfile.ZipFile(path) as zf:
-                roms = [i for i in zf.infolist()
-                        if Path(i.filename).suffix.lower() in CARTRIDGES]
-        except (zipfile.BadZipFile, OSError):
-            return None
-        if len(roms) == 1:
-            info = roms[0]
-            return (CARTRIDGES[Path(info.filename).suffix.lower()],
-                    f"{info.CRC:08X}", info.file_size)
-    return None
+    """(system, crc, size) for a GBA/DS ROM or a zip holding one, else None."""
+    found = datfiles.cartridge_crc(path)
+    if found is None:
+        return None
+    platform, crc, size = found
+    return datfiles.SYSTEMS[platform][1], crc, size
 
 
 def disc_size(path):
@@ -249,7 +159,7 @@ def _cue_plan(plan, cue, game):
 def build_plan(root, dat_dir=None):
     root = Path(root)
     plan = Plan(root)
-    dbs = Databases(dat_dir)
+    dbs = datfiles.Databases(dat_dir)
     paths = sorted(p for p in root.rglob("*") if p.is_file()
                    and not any(part.startswith(".") for part in p.relative_to(root).parts))
     for path in paths:
