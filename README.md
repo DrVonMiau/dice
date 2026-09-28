@@ -88,18 +88,23 @@ others (PS1 was one; GameCube…) also want a content check in
 
 ## Install
 
-Grab the latest `.flatpak` bundle from the
-[**Releases**](https://github.com/DrVonMiau/dice/releases) page, then:
+**[Install Dice →](https://drvonmiau.github.io/dice/)** — one click in GNOME
+Software, or from a terminal:
 
 ```sh
-flatpak install --user io.github.drvonmiau.Dice.flatpak
-flatpak run io.github.drvonmiau.Dice
+flatpak remote-add --user --if-not-exists dice https://drvonmiau.github.io/dice/index.flatpakrepo
+flatpak install --user dice io.github.drvonmiau.Dice
 ```
 
-Dice launches emulators installed on your computer (it talks to the host
-through `flatpak-spawn`), so install the ones you need too, e.g. from Flathub:
-`io.mgba.mGBA`, `net.kuribo64.melonDS`, `org.azahar_emu.Azahar`,
-`org.ppsspp.PPSSPP`, `net.pcsx2.PCSX2`.
+Updates then arrive through GNOME Software or `flatpak update` like any other
+app. You only need [Flatpak](https://flatpak.org/setup/), which most Linux
+distributions already have; the first install may offer to pull in the GNOME
+runtime — say yes. A single-file `.flatpak` bundle is also attached to every
+[release](https://github.com/DrVonMiau/dice/releases).
+
+Dice launches emulators installed on your computer, so install the ones you
+need too, e.g. from Flathub: `io.mgba.mGBA`, `net.kuribo64.melonDS`,
+`org.azahar_emu.Azahar`, `org.ppsspp.PPSSPP`, `net.pcsx2.PCSX2`.
 
 ## Building from source
 

@@ -33,39 +33,43 @@ flatpak run io.github.drvonmiau.Dice
 Trade-off: no automatic updates — users re-download to upgrade. That's what
 path 2 solves.
 
-## 2. Hosted Flatpak repo on GitHub Pages (scaffolded, activate later)
+## 2. Hosted Flatpak repo on GitHub Pages (active)
 
-A static Flatpak repository served from GitHub Pages. Users add it once as a
-remote and then get updates through GNOME Software / `flatpak update` like any
-store app.
+A signed Flatpak repository served from <https://drvonmiau.github.io/dice/>.
+Users add it once and then get updates through GNOME Software /
+`flatpak update` like any store app.
 
-**How it works** — `.github/workflows/flatpak-repo.yml` builds the repo with
-[Flatter](https://github.com/andyholmes/flatter) and deploys it to Pages. It's
-`workflow_dispatch`-only (manual) until you enable it, so it won't fail on every
-push before Pages exists.
+**How it works** — `.github/workflows/flatpak-repo.yml` runs when a release is
+published (or by hand from the Actions tab). It builds the app with
+[Flatter](https://github.com/andyholmes/flatter), signs the repository with the
+`FLATPAK_GPG_KEY` secret, and deploys it to Pages together with:
 
-**To activate**
+- `index.flatpakrepo` — the repository description (with the public key);
+- `io.github.drvonmiau.Dice.flatpakref` — one-click install for GNOME Software;
+- `index.html` — the landing page, from `pages/index.html`.
+
+**Setup (done once)**
 
 1. **Settings → Pages → Source: "GitHub Actions".**
-2. *(Recommended)* Sign the repo so users don't need `--no-gpg-verify`:
+2. A signing key without a passphrase (the workflow can't type one):
    ```sh
-   gpg --quick-gen-key "Dice <you@example.com>"
-   gpg --armor --export <KEYID> > dice.gpg                 # public — ship this
-   gpg --armor --export-secret-keys <KEYID>                # private — copy output
+   gpg --quick-gen-key "Dice <you@example.com>" default default never
+   gpg --list-secret-keys --keyid-format long      # the ID after "ed25519/"
+   gpg --armor --export-secret-keys <KEYID>        # copy into the secret below
    ```
-   Add two repo secrets — `FLATPAK_GPG_KEY` (the private-key block) and
-   `FLATPAK_GPG_KEYID` (the key id) — then uncomment the two signing lines in the
-   workflow.
-3. In the workflow, uncomment the `push: branches: [main]` trigger so every push
-   republishes the repo.
+3. Repository secret `FLATPAK_GPG_KEY` = the whole private-key block.
+   Keep an encrypted backup of the key (and of the revocation certificate in
+   `~/.gnupg/openpgp-revocs.d/`): losing it means users must re-add the repo.
 
-**What users do** (once your Pages URL is live, e.g. `https://drvonmiau.github.io/dice`)
+**Cutting a release** — publishing a release on GitHub now does both paths:
+the bundle is attached to the release (section 1) and the repository is
+updated (this section).
+
+**What users do**
 
 ```sh
-flatpak remote-add --user dice https://drvonmiau.github.io/dice/index.flatpakrepo
+flatpak remote-add --user --if-not-exists dice https://drvonmiau.github.io/dice/index.flatpakrepo
 flatpak install --user dice io.github.drvonmiau.Dice
 ```
 
-From then on `flatpak update` pulls new versions automatically. This is the
-backend for the download page you mentioned wanting to build — the page just
-links to the `.flatpakrepo` file and shows the two commands above.
+or the Install button on the landing page.

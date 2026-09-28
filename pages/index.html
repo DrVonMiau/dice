@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Dice — install</title>
+<meta name="description" content="Dice, a calm library for your emulator games on GNOME. Install it as a Flatpak.">
+<link rel="icon" href="io.github.drvonmiau.Dice.png">
+<style>
+  :root {
+    --bg: #f4f3f1; --card: #ffffff; --fg: #1f1d1c; --soft: #6f5f5c;
+    --accent: #c74e40; --accent-fg: #ffffff; --code: #f6eeec; --line: #e7dedc;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #1e1e1e; --card: #2a2a2a; --fg: #f2efee; --soft: #dfb0aa;
+      --accent: #f98375; --accent-fg: #2b1310; --code: #332826; --line: #3d3534;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--fg);
+    font: 16px/1.55 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 680px; margin: 0 auto; padding: 48px 16px 64px; }
+  .card {
+    background: var(--card); border-radius: 16px; padding: 32px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(0,0,0,.08);
+  }
+  header { display: flex; gap: 20px; align-items: center; margin-bottom: 24px; }
+  header img { width: 96px; height: 96px; flex: none; }
+  h1 { margin: 0; font-size: 30px; letter-spacing: -.01em; }
+  .tagline { margin: 4px 0 0; color: var(--soft); }
+  h2 {
+    font: 500 12px/1.4 "IBM Plex Mono", ui-monospace, monospace;
+    letter-spacing: .14em; text-transform: uppercase; color: var(--soft);
+    margin: 28px 0 10px;
+  }
+  .button {
+    display: inline-block; background: var(--accent); color: var(--accent-fg);
+    font: 600 15px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .04em;
+    text-decoration: none; padding: 14px 22px; border-radius: 10px;
+  }
+  .button:hover { filter: brightness(1.06); }
+  pre {
+    background: var(--code); border-radius: 10px; padding: 14px 16px; margin: 0;
+    font: 13px/1.6 "IBM Plex Mono", ui-monospace, monospace;
+    overflow-x: auto; white-space: pre;
+  }
+  p { margin: 8px 0; }
+  a { color: var(--accent); }
+  .note { color: var(--soft); font-size: 14px; }
+  footer { margin-top: 24px; text-align: center; font-size: 14px; color: var(--soft); }
+  @media (max-width: 480px) {
+    .card { padding: 20px; }
+    header { flex-direction: column; align-items: flex-start; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <div class="card">
+    <header>
+      <img src="io.github.drvonmiau.Dice.png" alt="">
+      <div>
+        <h1>Dice</h1>
+        <p class="tagline">A calm library for your emulator games on GNOME.</p>
+      </div>
+    </header>
+
+    <p>Point Dice at your ROM folder: it finds your GBA, DS, 3DS, PS1, PSP and PS2
+      games, shows them with their box art, and launches each one in the right
+      emulator.</p>
+
+    <h2>Install</h2>
+    <p><a class="button" href="io.github.drvonmiau.Dice.flatpakref">Install with GNOME Software</a></p>
+    <p class="note">Opens GNOME Software (or your distro's app store) and adds this
+      repository, so Dice updates like any other app.</p>
+
+    <h2>Or from a terminal</h2>
+<pre>flatpak remote-add --user --if-not-exists dice \
+    https://drvonmiau.github.io/dice/index.flatpakrepo
+flatpak install --user dice io.github.drvonmiau.Dice</pre>
+    <p class="note">Updates then arrive with <code>flatpak update</code>. You need
+      <a href="https://flatpak.org/setup/">Flatpak</a>, which most Linux
+      distributions already have. Emulators are installed separately — for
+      example mGBA, melonDS, PPSSPP or PCSX2 from Flathub.</p>
+
+    <h2>About</h2>
+    <p>Dice doesn't include, download or link to any games. It organises and
+      launches backups of games you own. Free software under the GPL 3.0 or later.</p>
+  </div>
+  <footer>
+    <a href="https://github.com/DrVonMiau/dice">Source on GitHub</a> ·
+    A sibling of <a href="https://github.com/DrVonMiau/lyre">Lyre</a>,
+    <a href="https://github.com/DrVonMiau/easel">Easel</a> and
+    <a href="https://github.com/DrVonMiau/quill">Quill</a>
+  </footer>
+</main>
+</body>
+</html>
