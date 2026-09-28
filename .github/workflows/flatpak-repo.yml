@@ -76,6 +76,8 @@ jobs:
           upload-pages-includes: |
             pages/index.html
             pages/io.github.drvonmiau.Dice.flatpakref
+            pages/screenshots/dice-library.png
+            pages/screenshots/dice-dark.png
             data/icons/hicolor/512x512/apps/io.github.drvonmiau.Dice.png
 
   deploy:
