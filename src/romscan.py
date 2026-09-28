@@ -72,6 +72,30 @@ def clean_title(stem):
     return title
 
 
+_DISC_RE = re.compile(r"\((?:disc|disk|cd)\s*(\d+)(?:\s*of\s*\d+)?\)", re.I)
+
+
+def disc_number(stem):
+    """2 for 'Final Fantasy VII (USA) (Disc 2)', else None."""
+    match = _DISC_RE.search(stem)
+    return int(match.group(1)) if match else None
+
+
+def m3u_members(path):
+    """The disc images an .m3u playlist lists (absolute paths), in order."""
+    base = os.path.dirname(path)
+    members = []
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            for line in fh:
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    members.append(os.path.normpath(os.path.join(base, line)))
+    except OSError:
+        pass
+    return members
+
+
 def region_from_name(stem):
     """The first region named in the file's tags, e.g. '(USA, Europe)'."""
     for group in re.findall(r"\(([^)]*)\)", stem):
@@ -571,6 +595,24 @@ def identify(path, folder_parts=()):
             return None
         found = found or {"platform": key}
         fmt = ext.lstrip(".").upper()
+    elif ext == ".m3u":
+        # A multi-disc playlist is the game; its first disc says which one.
+        members = [m for m in m3u_members(path) if os.path.exists(m)]
+        if not members or os.path.splitext(members[0])[1].lower() == ".m3u":
+            return None
+        first = identify(members[0], folder_parts)
+        if first is None:
+            return None
+        size = 0
+        for member in members:
+            try:
+                size += _file_size(member, os.path.splitext(member)[1].lower())
+            except OSError:
+                pass
+        return GameInfo(platform=first.platform, title=clean_title(stem),
+                        serial=first.serial, internal_title=first.internal_title,
+                        region=region_from_name(stem) or first.region, format="M3U",
+                        size=size, icon=first.icon)
     elif ext == ".pbp":
         if stem.upper() != "EBOOT":
             return None

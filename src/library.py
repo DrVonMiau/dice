@@ -70,6 +70,12 @@ def connect():
         con.commit()
     except sqlite3.OperationalError:
         pass
+    # 1 when the user picked the platform by hand: rescans then leave it be.
+    try:
+        con.execute("ALTER TABLE games ADD COLUMN platform_locked INTEGER DEFAULT 0")
+        con.commit()
+    except sqlite3.OperationalError:
+        pass
     return con
 
 
@@ -123,6 +129,17 @@ def all_games(con):
 
 def get_game(con, game_id):
     return con.execute("SELECT * FROM games WHERE id=?", (game_id,)).fetchone()
+
+
+def set_platform(con, game_id, platform):
+    """Pin a game to a platform chosen by the user (None: back to detection)."""
+    if platform is None:
+        con.execute("UPDATE games SET platform_locked=0, scan_version=0 WHERE id=?",
+                    (game_id,))
+    else:
+        con.execute("UPDATE games SET platform=?, platform_locked=1 WHERE id=?",
+                    (platform, game_id))
+    con.commit()
 
 
 def set_favorite(con, game_id, favorite):
@@ -243,6 +260,42 @@ def _prune_owned_covers(con):
                 entry.unlink(missing_ok=True)
     except OSError:
         pass
+
+
+# ------------------------------------------------------------ multi-disc ----
+
+def group_discs(rows):
+    """One card per multi-disc game. Returns (rows to show, {shown id:
+    [(disc number, row id)]}).
+
+    * An .m3u playlist is the game; the discs it lists are hidden (the
+      emulator swaps discs from the playlist).
+    * Otherwise files named "(Disc 1)", "(Disc 2)"… with the same platform
+      and title in the same folder become one card, shown through its
+      first disc; the side panel can start any disc."""
+    hidden, discs = set(), {}
+    by_path = {r["path"]: r for r in rows}
+    for r in rows:
+        if (r["format"] or "") == "M3U":
+            member_rows = [by_path[m] for m in romscan.m3u_members(r["path"]) if m in by_path]
+            hidden.update(x["id"] for x in member_rows)
+            discs[r["id"]] = [(n, x["id"]) for n, x in enumerate(member_rows, 1)]
+    groups = {}
+    for r in rows:
+        if r["id"] in hidden or (r["format"] or "") == "M3U":
+            continue
+        number = romscan.disc_number(os.path.basename(r["path"]))
+        if number is not None:
+            key = (r["platform"], r["title"].lower(), os.path.dirname(r["path"]))
+            groups.setdefault(key, []).append((number, r))
+    for members in groups.values():
+        if len(members) < 2:
+            continue
+        members.sort(key=lambda m: m[0])
+        first = members[0][1]
+        discs[first["id"]] = [(n, r["id"]) for n, r in members]
+        hidden.update(r["id"] for _n, r in members[1:])
+    return [r for r in rows if r["id"] not in hidden], discs
 
 
 # -------------------------------------------------------------- scanning ----
@@ -392,6 +445,8 @@ def _store(con, path, mtime, info, existing):
              info.region, info.format, info.size, mtime, time.time(), cover, source,
              SCAN_VERSION))
         return
+    if "platform_locked" in existing.keys() and existing["platform_locked"]:
+        del values["platform"]
     sets = ", ".join(f"{k}=?" for k in values)
     params = list(values.values())
     if not keep_user:

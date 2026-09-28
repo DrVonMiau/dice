@@ -125,10 +125,11 @@ PLATFORMS = (
 
 BY_KEY = {p.key: p for p in PLATFORMS}
 
-# Every extension the scanner looks at, plain and disc. .zip is handled
-# specially: it counts only when it holds a cartridge ROM (see romscan).
+# Every extension the scanner looks at, plain and disc. .zip and .m3u are
+# handled specially: a zip counts only when it holds a cartridge ROM, and a
+# multi-disc .m3u takes its platform from its first disc (see romscan).
 ALL_EXTENSIONS = frozenset(
-    {ext for p in PLATFORMS for ext in p.extensions + p.disc_extensions} | {".zip"})
+    {ext for p in PLATFORMS for ext in p.extensions + p.disc_extensions} | {".zip", ".m3u"})
 
 
 def get(key):

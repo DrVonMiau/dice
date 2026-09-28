@@ -374,6 +374,35 @@ class PlayStationOneTests(unittest.TestCase):
         self.assertEqual(romscan.identify(cd, ("PSX",)).platform, "ps1")
 
 
+class MultiDiscTests(unittest.TestCase):
+    def test_disc_number(self):
+        self.assertEqual(romscan.disc_number("FF VII (USA) (Disc 2)"), 2)
+        self.assertEqual(romscan.disc_number("Game (Disc 1 of 3)"), 1)
+        self.assertEqual(romscan.disc_number("Game (CD2)"), 2)
+        self.assertIsNone(romscan.disc_number("Discworld (Europe)"))
+
+    def test_m3u_takes_platform_from_first_disc(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            iso = make_iso({"SYSTEM.CNF": b"BOOT = cdrom:\\SCUS_941.63;1\n"})
+            for n in (1, 2):
+                with open(os.path.join(tmp, f"FF7 (Disc {n}).iso"), "wb") as fh:
+                    fh.write(iso)
+            m3u = os.path.join(tmp, "Final Fantasy VII (USA).m3u")
+            with open(m3u, "w") as fh:
+                fh.write("# playlist\nFF7 (Disc 1).iso\nFF7 (Disc 2).iso\n")
+            info = romscan.identify(m3u)
+        self.assertEqual((info.platform, info.format, info.title),
+                         ("ps1", "M3U", "Final Fantasy VII"))
+        self.assertEqual(info.size, 2 * len(iso))
+
+    def test_unrelated_m3u_is_ignored(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m3u = os.path.join(tmp, "music.m3u")
+            with open(m3u, "w") as fh:
+                fh.write("song.mp3\n")
+            self.assertIsNone(romscan.identify(m3u))
+
+
 class PlatformTests(unittest.TestCase):
     def test_folder_hint_innermost_wins(self):
         self.assertEqual(platforms.from_folder_hint(("PSP", "PS2")).key, "ps2")

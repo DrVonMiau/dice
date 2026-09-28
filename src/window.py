@@ -19,6 +19,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 
 from . import covers, emulators, platforms, portal
 from . import library as lib
+from .gamepad import Gamepads
 from .models import Game
 from .widgets import Cover, ReportingGridView, forget_thumbnail  # noqa: F401 (registers DiceGridView)
 
@@ -121,6 +122,7 @@ class DiceWindow(Adw.ApplicationWindow):
 
         self._games = []            # every Game, as loaded
         self._rows = {}             # game id -> library row (serial etc.)
+        self._discs = {}            # shown game id -> [(disc number, row id)]
         self._by_id = {}
         self._tab = "all"
         self._tab_buttons = {}
@@ -161,6 +163,7 @@ class DiceWindow(Adw.ApplicationWindow):
         self._apply_pointer_cursors(self)
         self._detect_emulators()
         self._start_cover_worker()
+        self._gamepads = Gamepads(self._on_pad, self._pad_active)
 
     # ------------------------------------------------------------ chrome --
 
@@ -291,6 +294,11 @@ class DiceWindow(Adw.ApplicationWindow):
             act.connect("activate", handler)
             self.add_action(act)
 
+        self._platform_action = Gio.SimpleAction.new_stateful(
+            "set-platform", GLib.VariantType.new("s"), GLib.Variant.new_string(""))
+        self._platform_action.connect("activate", self._on_set_platform)
+        self.add_action(self._platform_action)
+
         sort = Gio.SimpleAction.new_stateful(
             "sort", GLib.VariantType.new("s"), GLib.Variant.new_string(self._sort))
         sort.connect("activate", self._on_sort)
@@ -313,6 +321,49 @@ class DiceWindow(Adw.ApplicationWindow):
         key_ctl = Gtk.EventControllerKey()
         key_ctl.connect("key-pressed", self._on_key_pressed)
         self.add_controller(key_ctl)
+
+    # ----------------------------------------------------------- gamepad --
+
+    def _pad_active(self):
+        # Only while Dice itself has focus and no dialog is up: buttons pressed
+        # in a running emulator must never drive Dice behind it.
+        return self.is_active() and self.get_visible_dialog() is None
+
+    def _on_pad(self, action):
+        if action in ("up", "down", "left", "right"):
+            dx = {"left": -1, "right": 1}.get(action, 0)
+            dy = {"up": -1, "down": 1}.get(action, 0)
+            self._move_selection(dx, dy)
+        elif action == "activate":
+            if self._selected_id is not None:
+                self._play(self._selected_id)
+            else:
+                self._move_selection(0, 0)
+        elif action == "back":
+            self._close_info()
+        elif action == "favourite" and self._selected_id is not None:
+            self._toggle_fav(self._selected_id)
+        elif action in ("prev-tab", "next-tab"):
+            keys = self._tab_keys()
+            index = keys.index(self._tab) if self._tab in keys else 0
+            step = -1 if action == "prev-tab" else 1
+            self._select_tab(keys[(index + step) % len(keys)])
+
+    def _move_selection(self, dx, dy):
+        """Move the selection across the visible grid (columns wrap into rows)
+        and keep it in view."""
+        count = self.store.get_n_items()
+        if not count:
+            return
+        ids = [self.store.get_item(i).id for i in range(count)]
+        if self._selected_id not in ids:
+            index = 0
+        else:
+            columns = max(1, self.game_grid.get_max_columns())
+            index = ids.index(self._selected_id) + dx + dy * columns
+            index = max(0, min(count - 1, index))
+        self._select(ids[index])
+        self.game_grid.scroll_to(index, Gtk.ListScrollFlags.NONE, None)
 
     def _on_key_pressed(self, _ctl, keyval, _keycode, _state):
         if keyval == Gdk.KEY_Escape and self.info_revealer.get_reveal_child():
@@ -395,7 +446,9 @@ class DiceWindow(Adw.ApplicationWindow):
         box.title.set_tooltip_text(game.title)
         box.badge.set_label(platforms.label(game.platform))
         # Platform is already the badge; the subtitle carries region + size.
-        bits = [b for b in (game.region, _fmt_size(game.size) if game.size else "") if b]
+        discs = len(self._discs.get(game.id, ()))
+        bits = [b for b in (game.region, f"{discs} discs" if discs else "",
+                            _fmt_size(game.size) if game.size else "") if b]
         box.sub.set_label(" · ".join(bits))
         self._set_card_fav(box, game.favorite)
         if game.id == self._selected_id:
@@ -483,7 +536,7 @@ class DiceWindow(Adw.ApplicationWindow):
     def _tab_keys(self):
         present = {g.platform for g in self._games}
         keys = ["all"] + [p.key for p in platforms.PLATFORMS if p.key in present]
-        return keys + ["favourites"]
+        return keys + ["favourites", "recent"]
 
     def _build_tabs(self):
         child = self.tabs_box.get_first_child()
@@ -500,6 +553,8 @@ class DiceWindow(Adw.ApplicationWindow):
                 label = "All"
             elif key == "favourites":
                 label = "Favourites"
+            elif key == "recent":
+                label = "Recent"
             else:
                 label = platforms.label(key)
             btn = Gtk.Button(label=label, css_classes=["flat", "tab-btn"])
@@ -556,7 +611,9 @@ class DiceWindow(Adw.ApplicationWindow):
     def _matches(self, game):
         if self._tab == "favourites" and not game.favorite:
             return False
-        if self._tab not in ("all", "favourites") and game.platform != self._tab:
+        if self._tab == "recent" and not game.last_played:
+            return False
+        if self._tab not in ("all", "favourites", "recent") and game.platform != self._tab:
             return False
         if not self._search:
             return True
@@ -578,7 +635,11 @@ class DiceWindow(Adw.ApplicationWindow):
         return sorted(games, key=lambda g: _sort_title(g.title))
 
     def _apply_filters(self):
-        games = self._sorted([g for g in self._games if self._matches(g)])
+        games = [g for g in self._games if self._matches(g)]
+        if self._tab == "recent":
+            games = sorted(games, key=lambda g: -g.last_played)[:24]
+        else:
+            games = self._sorted(games)
         self.store.splice(0, self.store.get_n_items(), games)
         if not self._games:
             self.paper_stack.set_visible_child_name("empty")
@@ -586,6 +647,10 @@ class DiceWindow(Adw.ApplicationWindow):
             if self._search:
                 self.none_page.set_title("No Matches")
                 self.none_page.set_description(f"Nothing matches “{self._search}”.")
+            elif self._tab == "recent":
+                self.none_page.set_title("Nothing Played Yet")
+                self.none_page.set_description(
+                    "Games you play from Dice show up here, most recent first.")
             elif self._tab == "favourites":
                 self.none_page.set_title("No Favourites Yet")
                 self.none_page.set_description(
@@ -609,7 +674,12 @@ class DiceWindow(Adw.ApplicationWindow):
     def _reload(self):
         rows = lib.all_games(self.con)
         self._rows = {r["id"]: r for r in rows}
+        rows, self._discs = lib.group_discs(rows)
         self._games = [self._game_from_row(r) for r in rows]
+        for game in self._games:
+            discs = self._discs.get(game.id)
+            if discs:
+                game.size = sum(self._rows[i]["size"] or 0 for _n, i in discs)
         self._by_id = {g.id: g for g in self._games}
         self._build_tabs()
         self._apply_filters()
@@ -719,6 +789,17 @@ class DiceWindow(Adw.ApplicationWindow):
         elif row["cover_source"] not in ("sidecar",):
             cover.append("Find Cover Online", "win.fetch-cover")
         menu.append_section(None, cover)
+        platform_menu = Gio.Menu()
+        for p in platforms.PLATFORMS:
+            platform_menu.append(p.name, f"win.set-platform::{p.key}")
+        auto = Gio.Menu()
+        auto.append("Detect Automatically", "win.set-platform::")
+        platform_menu.append_section(None, auto)
+        choose = Gio.Menu()
+        choose.append_submenu("Platform", platform_menu)
+        menu.append_section(None, choose)
+        self._platform_action.set_state(GLib.Variant.new_string(
+            row["platform"] if row["platform_locked"] else ""))
         files = Gio.Menu()
         files.append("Show in Files", "win.show-in-files")
         files.append("Copy Path", "win.copy-path")
@@ -763,6 +844,12 @@ class DiceWindow(Adw.ApplicationWindow):
             box.remove(child)
             child = nxt
 
+        # Disc chips first: they're launch controls, so they sit by Play.
+        discs = self._discs.get(game_id)
+        if discs and row["format"] != "M3U":
+            box.append(self._discs_row(game_id, discs))
+        elif discs:
+            box.append(self._info_row("Discs", f"{len(discs)} (swap in the emulator)"))
         box.append(self._info_row("Emulator", self._emulator_label(row["platform"]),
                                   on_click=self._on_preferences))
         box.append(self._info_divider())
@@ -772,7 +859,7 @@ class DiceWindow(Adw.ApplicationWindow):
         if row["internal_title"] and row["internal_title"].lower() != row["title"].lower():
             box.append(self._info_row("Internal title", row["internal_title"]))
         box.append(self._info_row("Format", row["format"] or "—"))
-        box.append(self._info_row("Size", _fmt_size(row["size"])))
+        box.append(self._info_row("Size", _fmt_size(game.size)))
         box.append(self._info_divider())
         box.append(self._info_row("Last played", _fmt_when(row["last_played"])))
         box.append(self._info_row("Play time", _fmt_duration(row["play_seconds"] or 0)))
@@ -787,6 +874,37 @@ class DiceWindow(Adw.ApplicationWindow):
             self.info_revealer.set_visible(True)
             self.info_revealer.set_reveal_child(True)
             self._apply_layout_metrics()
+
+    def _on_set_platform(self, action, value):
+        game_id = self._selected_id
+        if game_id is None:
+            return
+        key = value.get_string()
+        action.set_state(value)
+        if key:
+            lib.set_platform(self.con, game_id, key)
+            self._toast(f"Moved to {platforms.label(key)}")
+        else:
+            lib.set_platform(self.con, game_id, None)
+            lib.refresh_game(self.con, game_id)
+        self._reload()
+        if self._tab not in ("all", "favourites", "recent") and self._selected_id:
+            game = self._by_id.get(self._selected_id)
+            if game is not None and game.platform != self._tab:
+                self._select_tab(game.platform)
+
+    def _discs_row(self, game_id, discs):
+        """'Discs  [1] [2] [3]': Play starts disc 1, these start any disc."""
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=SPACE_S)
+        row.append(Gtk.Label(label="Discs", xalign=0, hexpand=True, css_classes=["info-key"]))
+        for number, row_id in discs:
+            path = self._rows[row_id]["path"]
+            btn = Gtk.Button(label=str(number), tooltip_text=f"Play disc {number}",
+                             css_classes=["disc-btn"], valign=Gtk.Align.CENTER)
+            btn.set_cursor(POINTER_CURSOR)
+            btn.connect("clicked", lambda _b, p=path: self._play(game_id, p))
+            row.append(btn)
+        return row
 
     def _update_info_fav(self, faved):
         self.info_fav_btn.set_icon_name(

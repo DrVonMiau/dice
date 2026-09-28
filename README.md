@@ -31,11 +31,14 @@ right emulator. It only ever *reads* your folders.
 ## Features
 
 **Your library**
-- **A tab per platform** — All, then GBA, NDS, 3DS, PS1, PSP, PS2 (only the ones you have), then Favourites
+- **A tab per platform** — All, then GBA, NDS, 3DS, PS1, PSP, PS2 (only the ones you have), then Favourites and Recent
+- **Multi-disc games are one card**: an `.m3u` playlist, or files named "(Disc 1)", "(Disc 2)"… — start any disc from the side panel
+- **Rename or move files freely**: a game keeps its favourite, play history and cover
+- **Gamepad navigation** — D-pad to browse, A to play, B to go back, Y to favourite, LB/RB to switch tabs
 - **Knows what's inside**: GBA and DS cartridge headers and 3DS product
   codes (game code, region), PSP
   discs (`PARAM.SFO` title and serial) and PS2 discs (`SYSTEM.CNF` serial) —
-  including **CSO**, **BIN/CUE** and **zipped GBA/DS** files. PS1, PSP and PS2 discs
+  including **CSO**, **CHD**, **BIN/CUE** and **zipped GBA/DS** files. PS1, PSP and PS2 discs
   are told apart by their contents, not their folder
 - **Search** by title, serial, region or file name; **sort** by title,
   platform, recently played, recently added or size
@@ -53,6 +56,9 @@ right emulator. It only ever *reads* your folders.
   uses any command you set per platform in Preferences
 - Tracks **last played** and **play time**
 - Double-click a cover or press <kbd>Enter</kbd> to play
+- If an emulator installed as a Flatpak can't see your ROM folder, Dice offers
+  to grant it access (or to share just that one game)
+- Wrong platform guess? Pick the right one from the side panel's menu
 
 ## Tidy file names
 

@@ -26,6 +26,7 @@
 	    <li>Cover art from images beside your ROMs, from inside PSP discs, or downloaded by name</li>
 	    <li>Finds mGBA, melonDS, Azahar, DuckStation, PPSSPP and PCSX2 automatically, or uses any command you set</li>
 	    <li>Remembers when you last played and for how long</li>
+	    <li>Multi-disc games as one card, and gamepad navigation</li>
 	  </ul>
 	</description>
 	<launchable type="desktop-id">io.github.drvonmiau.Dice.desktop</launchable>
@@ -45,9 +46,16 @@
 		<control>pointing</control>
 	</supports>
 	<releases>
-		<release version="0.1.0" date="2026-09-26">
+		<release version="0.1.0" date="2026-09-28">
 			<description>
-				<p>First draft: GBA, PSP and PS2 libraries, box art, and one-click launching.</p>
+				<p>First release.</p>
+				<ul>
+					<li>GBA, Nintendo DS, 3DS, PlayStation, PSP and PlayStation 2 libraries, with a tab per platform plus Favourites and Recent</li>
+					<li>Titles, serials and regions read from ROMs and discs, including CSO, CHD and BIN/CUE</li>
+					<li>Box art from your folders, from PSP discs, or downloaded by name</li>
+					<li>One-click launching in mGBA, melonDS, Azahar, DuckStation, PPSSPP or PCSX2, with help granting Flatpak emulators access to your games</li>
+					<li>Multi-disc games as one card, gamepad navigation, and history that survives renames</li>
+				</ul>
 			</description>
 		</release>
 	</releases>

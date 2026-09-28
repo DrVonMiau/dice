@@ -37,6 +37,7 @@ dice_sources = [
   'covers.py',
   'portal.py',
   'chd.py',
+  'gamepad.py',
   'models.py',
   'widgets.py',
 ]

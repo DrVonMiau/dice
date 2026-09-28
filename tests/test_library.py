@@ -13,6 +13,37 @@ from test_romscan import PNG, make_gba, make_iso, make_sfo  # noqa: E402
 from src import library as lib  # noqa: E402
 
 
+class DiscGroupingTests(unittest.TestCase):
+    @staticmethod
+    def row(i, path, fmt="CUE", platform="ps1", title="Final Fantasy VII"):
+        return {"id": i, "path": path, "format": fmt, "platform": platform, "title": title}
+
+    def test_disc_files_become_one_game(self):
+        rows = [self.row(3, "/r/PS1/Final Fantasy VII (USA) (Disc 3).cue"),
+                self.row(1, "/r/PS1/Final Fantasy VII (USA) (Disc 1).cue"),
+                self.row(2, "/r/PS1/Final Fantasy VII (USA) (Disc 2).cue"),
+                self.row(4, "/r/PS1/Spyro (USA).cue", title="Spyro")]
+        shown, discs = lib.group_discs(rows)
+        self.assertEqual(sorted(r["id"] for r in shown), [1, 4])
+        self.assertEqual(discs[1], [(1, 1), (2, 2), (3, 3)])
+
+    def test_playlist_hides_its_discs_in_order(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            m3u = os.path.join(tmp, "FF7.m3u")
+            with open(m3u, "w") as fh:
+                fh.write("FF7 (Disc 2).chd\nFF7 (Disc 1).chd\n")
+            rows = [self.row(1, os.path.join(tmp, "FF7 (Disc 1).chd"), "CHD"),
+                    self.row(2, os.path.join(tmp, "FF7 (Disc 2).chd"), "CHD"),
+                    self.row(9, m3u, "M3U")]
+            shown, discs = lib.group_discs(rows)
+        self.assertEqual([r["id"] for r in shown], [9])
+        self.assertEqual(discs[9], [(1, 2), (2, 1)])
+
+    def test_single_disc_tag_is_left_alone(self):
+        shown, discs = lib.group_discs([self.row(1, "/r/X (Disc 1).cue")])
+        self.assertEqual((len(shown), discs), (1, {}))
+
+
 class LibraryTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
