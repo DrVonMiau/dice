@@ -32,8 +32,8 @@
 	<launchable type="desktop-id">io.github.drvonmiau.Dice.desktop</launchable>
 	<content_rating type="oars-1.1"/>
 	<branding>
-		<color type="primary" scheme_preference="light">#d6ede3</color>
-		<color type="primary" scheme_preference="dark">#1f3a2f</color>
+		<color type="primary" scheme_preference="light">#fde0db</color>
+		<color type="primary" scheme_preference="dark">#4a2621</color>
 	</branding>
 	<url type="homepage">https://github.com/DrVonMiau/dice</url>
 	<url type="bugtracker">https://github.com/DrVonMiau/dice/issues</url>

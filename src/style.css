@@ -2,14 +2,14 @@
    Dice — design tokens
    ----------------------------------------------------------------------------
    Dice shares the design language of its siblings Lyre (lavender) and Easel
-   (blue): see docs/DESIGN.md. Only the accent changes — Dice is emerald, a
-   "go / play" green that stays clearly apart from the siblings' hues and
-   from the gold used for favourites.
+   (blue): see docs/DESIGN.md. Only the accent changes — Dice is coral, taken
+   from its icon: the icon's own #f98375 on dark surfaces, and a deeper shade
+   of the same hue on light ones so white text on it stays readable.
 
    Colour model: neutral surfaces and primary text come from libadwaita's
    named system colours (@window_bg_color, @card_bg_color, @view_bg_color,
    @window_fg_color) so both light and dark track the system Adwaita palette.
-   Colour beyond that is reserved for accents: green for interactive
+   Colour beyond that is reserved for accents: coral for interactive
    elements, gold for favourites.
 
    Spacing scale (px):  XS 4 · S 8 · M 16 · L 24
@@ -19,15 +19,16 @@
               (dark: .2 / .35).
    ========================================================================= */
 
-/* Interactive accent — emerald (light) / mint (dark) */
-@define-color dice_green #2b8563;
-@define-color dice_green_light #5cc79a;
+/* Interactive accent — deep coral (light, 4.6:1 with white) / the icon's
+   coral (dark, with dark text on filled buttons) */
+@define-color dice_coral #c74e40;
+@define-color dice_coral_light #f98375;
 /* Favourites — shared with Lyre and Easel */
 @define-color dice_gold #c1962b;
 @define-color dice_gold_light #ddb964;
-/* Secondary text — a green tint, darker on light / lighter on dark */
-@define-color dice_text_soft #587a6d;
-@define-color dice_text_soft_dark #9fcab8;
+/* Secondary text — a coral tint, darker on light / lighter on dark */
+@define-color dice_text_soft #9f6660;
+@define-color dice_text_soft_dark #dfb0aa;
 
 .root-bg {
   background-color: shade(@window_bg_color, 0.94);
@@ -40,16 +41,16 @@ window.dark .root-bg {
 
 link,
 .root-bg link {
-  color: @dice_green;
+  color: @dice_coral;
 }
 
 switch:checked {
-  background-color: @dice_green;
+  background-color: @dice_coral;
 }
 
 checkbutton check:checked,
 checkbutton radio:checked {
-  background-color: @dice_green;
+  background-color: @dice_coral;
 }
 
 /* ---------- custom titlebar ---------- */
@@ -133,8 +134,8 @@ menubutton.titlebar-icon > button {
 }
 
 .search-entry:focus-within {
-  border-color: @dice_green;
-  outline-color: alpha(@dice_green, 0.5);
+  border-color: @dice_coral;
+  outline-color: alpha(@dice_coral, 0.5);
 }
 
 /* ---------- paper card ---------- */
@@ -201,9 +202,9 @@ menubutton.titlebar-icon > button {
   padding: 2px 6px;
 }
 
-/* Green ring on the card whose game is open in the side panel. */
+/* Coral ring on the card whose game is open in the side panel. */
 .card-box.tile-selected .cover {
-  box-shadow: 0 0 0 3px @dice_green;
+  box-shadow: 0 0 0 3px @dice_coral;
 }
 
 .card-box:hover .cover {
@@ -265,7 +266,7 @@ gridview.card-grid > child:focus {
 .info-key {
   font-family: "IBM Plex Mono", monospace;
   font-size: 12px;
-  color: @dice_green;
+  color: @dice_coral;
 }
 
 .info-value {
@@ -281,7 +282,7 @@ gridview.card-grid > child:focus {
 
 /* Clickable values (Path, Emulator) hint on hover. */
 .info-link:hover {
-  color: @dice_green;
+  color: @dice_coral;
   text-decoration: underline;
 }
 
@@ -304,7 +305,7 @@ gridview.card-grid > child:focus {
   padding: 0 16px;
   border-radius: 10px;
   color: #ffffff;
-  background-color: @dice_green;
+  background-color: @dice_coral;
   font-family: "IBM Plex Mono", monospace;
   font-size: 14px;
   font-weight: 600;
@@ -313,11 +314,11 @@ gridview.card-grid > child:focus {
 }
 
 .play-btn:hover {
-  background-color: shade(@dice_green, 1.08);
+  background-color: shade(@dice_coral, 1.08);
 }
 
 .play-btn:active {
-  background-color: shade(@dice_green, 0.92);
+  background-color: shade(@dice_coral, 0.92);
 }
 
 /* Secondary quick actions beside Play. */
@@ -360,12 +361,12 @@ menubutton.info-action {
 
 .disc-btn:hover {
   color: #ffffff;
-  background-color: @dice_green;
+  background-color: @dice_coral;
 }
 
 window.dark .disc-btn:hover {
-  color: #10241b;
-  background-color: @dice_green_light;
+  color: #2b1310;
+  background-color: @dice_coral_light;
 }
 
 /* ---------- cover-size slider (titlebar) ---------- */
@@ -388,7 +389,7 @@ window.dark .disc-btn:hover {
 .thumb-scale highlight {
   min-height: 2px;
   border-radius: 1px;
-  background-color: @dice_green;
+  background-color: @dice_coral;
   box-shadow: none;
 }
 
@@ -398,21 +399,21 @@ window.dark .disc-btn:hover {
   margin: -6px;
   padding: 0;
   border-radius: 9999px;
-  background-color: @dice_green;
+  background-color: @dice_coral;
   border: 1px solid @window_bg_color;
   box-shadow: 0 1px 3px alpha(#000, 0.25);
 }
 
 /* Empty-state call-to-action — primary button, radius 10. */
 .empty-cta {
-  background-color: @dice_green;
+  background-color: @dice_coral;
   color: #ffffff;
   border-radius: 10px;
   padding: 8px 20px;
 }
 
 .empty-cta:hover {
-  background-color: shade(@dice_green, 1.08);
+  background-color: shade(@dice_coral, 1.08);
 }
 
 /* ==================== dark theme ====================
@@ -421,7 +422,7 @@ window.dark .disc-btn:hover {
 
 window.dark link,
 window.dark .root-bg link {
-  color: @dice_green_light;
+  color: @dice_coral_light;
 }
 
 window.dark .tab-btn.tab-active {
@@ -430,8 +431,8 @@ window.dark .tab-btn.tab-active {
 }
 
 window.dark .search-entry:focus-within {
-  border-color: @dice_green_light;
-  outline-color: alpha(@dice_green_light, 0.5);
+  border-color: @dice_coral_light;
+  outline-color: alpha(@dice_coral_light, 0.5);
 }
 
 window.dark .paper {
@@ -446,27 +447,27 @@ window.dark .mono-dim-sm {
 
 window.dark .info-key,
 window.dark .info-link:hover {
-  color: @dice_green_light;
+  color: @dice_coral_light;
 }
 
 window.dark .card-box.tile-selected .cover {
-  box-shadow: 0 0 0 3px @dice_green_light;
+  box-shadow: 0 0 0 3px @dice_coral_light;
 }
 
 window.dark .thumb-scale highlight,
 window.dark .thumb-scale slider {
-  background-color: @dice_green_light;
+  background-color: @dice_coral_light;
 }
 
 window.dark .play-btn,
 window.dark .empty-cta {
-  background-color: @dice_green_light;
-  color: #10241b;
+  background-color: @dice_coral_light;
+  color: #2b1310;
 }
 
 window.dark .play-btn:hover,
 window.dark .empty-cta:hover {
-  background-color: shade(@dice_green_light, 1.08);
+  background-color: shade(@dice_coral_light, 1.08);
 }
 
 window.dark .info-action.faved {

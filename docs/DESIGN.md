@@ -10,15 +10,17 @@ Dice uses the design system documented in
 
 | Token | Light | Dark | Used for |
 |---|---|---|---|
-| `@dice_green` | `#2b8563` | — | Interactive: Play, slider, selection ring, info keys, focus |
-| `@dice_green_light` | — | `#5cc79a` | The same on dark surfaces (with dark text on filled buttons) |
+| `@dice_coral` | `#c74e40` | — | Interactive: Play, slider, selection ring, info keys, focus |
+| `@dice_coral_light` | — | `#f98375` | The same on dark surfaces (with dark text `#2b1310` on filled buttons) |
 | `@dice_gold` / `_light` | `#c1962b` | `#ddb964` | Favourites (shared with Lyre and Easel) |
-| `@dice_text_soft` / `_dark` | `#587a6d` | `#9fcab8` | Secondary / mono-dim text |
+| `@dice_text_soft` / `_dark` | `#9f6660` | `#dfb0aa` | Secondary / mono-dim text |
 
-Why emerald: the siblings own lavender (Lyre) and blue (Easel), and gold is
-taken by favourites. Green reads as "go / play" — Play is the app's one
-primary action — and nods to the phosphor screens of handhelds. White on
-`#2b8563` clears 4.5:1.
+Why coral: it's the tile colour of Dice's icon (`#f98375`), and it stays well
+apart from the siblings' lavender (Lyre) and blue (Easel) and from the gold
+of favourites. The icon's coral is too light to carry white text (2.5:1), so
+the light theme uses a deeper shade of the same hue: white on `#c74e40` is
+4.6:1, as is `#c74e40` text on the white paper. On dark surfaces the icon's own
+coral reads at 5.5:1 or better, and dark text on it at 7:1.
 
 ## Components added for Dice
 
