@@ -35,6 +35,11 @@ jobs:
       - name: Check out
         uses: actions/checkout@v4
 
+      # flatpak-builder unpacks the IBM Plex font archives (.zip) with the
+      # container's unzip, which Flatter's image doesn't ship.
+      - name: Install unzip
+        run: dnf install -y unzip
+
       - name: Import signing key
         id: gpg
         uses: crazy-max/ghaction-import-gpg@v6
