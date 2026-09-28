@@ -8,7 +8,8 @@ name: Flatpak repository (GitHub Pages)
 #
 # Needs (see docs/DISTRIBUTION.md):
 #   * Settings → Pages → Source: "GitHub Actions"
-#   * the FLATPAK_GPG_KEY repository secret (the armored private key)
+#   * the FLATPAK_GPG_KEY repository secret (the armored private key), and
+#     FLATPAK_GPG_PASSPHRASE if the key has a passphrase
 
 on:
   release:
@@ -45,6 +46,9 @@ jobs:
         uses: crazy-max/ghaction-import-gpg@v6
         with:
           gpg_private_key: ${{ secrets.FLATPAK_GPG_KEY }}
+          # Only needed if the key has a passphrase; the action presets it in
+          # gpg-agent, as there's nobody to type it on the runner.
+          passphrase: ${{ secrets.FLATPAK_GPG_PASSPHRASE }}
 
       # A .flatpakref lets GNOME Software install Dice (and add the repo for
       # updates) in one click from the landing page.

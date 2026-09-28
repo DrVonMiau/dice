@@ -51,13 +51,14 @@ published (or by hand from the Actions tab). It builds the app with
 **Setup (done once)**
 
 1. **Settings → Pages → Source: "GitHub Actions".**
-2. A signing key without a passphrase (the workflow can't type one):
+2. A signing key (with a passphrase, also store it as a secret — see 3):
    ```sh
    gpg --quick-gen-key "Dice <you@example.com>" default default never
    gpg --list-secret-keys --keyid-format long      # the ID after "ed25519/"
    gpg --armor --export-secret-keys <KEYID>        # copy into the secret below
    ```
-3. Repository secret `FLATPAK_GPG_KEY` = the whole private-key block.
+3. Repository secret `FLATPAK_GPG_KEY` = the whole private-key block, and
+   — if the key has a passphrase — `FLATPAK_GPG_PASSPHRASE` = the passphrase.
    Keep an encrypted backup of the key (and of the revocation certificate in
    `~/.gnupg/openpgp-revocs.d/`): losing it means users must re-add the repo.
 
