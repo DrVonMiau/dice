@@ -59,10 +59,10 @@ push before Pages exists.
 3. In the workflow, uncomment the `push: branches: [main]` trigger so every push
    republishes the repo.
 
-**What users do** (once your Pages URL is live, e.g. `https://drvonmiau.github.io/roms`)
+**What users do** (once your Pages URL is live, e.g. `https://drvonmiau.github.io/dice`)
 
 ```sh
-flatpak remote-add --user dice https://drvonmiau.github.io/roms/index.flatpakrepo
+flatpak remote-add --user dice https://drvonmiau.github.io/dice/index.flatpakrepo
 flatpak install --user dice io.github.drvonmiau.Dice
 ```
 

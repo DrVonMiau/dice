@@ -111,6 +111,47 @@ class LibraryTests(unittest.TestCase):
         self.assertEqual(row["favorite"], 1)
         self.assertEqual(row["scan_version"], lib.SCAN_VERSION)
 
+    def test_renamed_file_keeps_its_history(self):
+        lib.scan_all(self.con)
+        gba = self._game("gba")
+        lib.set_favorite(self.con, gba["id"], True)
+        lib.record_launch(self.con, gba["id"])
+        new_path = os.path.join(self.root, "GBA", "Golden Sun (USA, Europe).gba")
+        os.rename(gba["path"], new_path)
+        lib.scan_all(self.con)
+        row = lib.get_game(self.con, gba["id"])
+        self.assertEqual(row["path"], new_path)
+        self.assertEqual(row["title"], "Golden Sun")
+        self.assertEqual((row["favorite"], row["play_count"]), (1, 1))
+        self.assertEqual(len(lib.all_games(self.con)), 2)
+
+    def test_move_between_library_folders(self):
+        other = self.root + "-2"
+        os.makedirs(other)
+        lib.add_folder(self.con, other)
+        lib.scan_all(self.con)
+        psp = self._game("psp")
+        lib.set_favorite(self.con, psp["id"], True)
+        os.rename(psp["path"], os.path.join(other, "Lumines.iso"))
+        lib.scan_all(self.con)
+        row = lib.get_game(self.con, psp["id"])
+        self.assertTrue(row["path"].startswith(other + "/"))
+        self.assertEqual(row["favorite"], 1)
+
+    def test_duplicates_are_not_merged(self):
+        lib.scan_all(self.con)
+        gba = self._game("gba")
+        with open(gba["path"], "rb") as fh:
+            data = fh.read()
+        # One copy disappears while two identical copies appear: ambiguous,
+        # so both are new games and the old row goes.
+        os.remove(gba["path"])
+        self._write("GBA/copy one.gba", data)
+        self._write("GBA/copy two.gba", data)
+        lib.scan_all(self.con)
+        self.assertIsNone(lib.get_game(self.con, gba["id"]))
+        self.assertEqual(len([r for r in lib.all_games(self.con) if r["platform"] == "gba"]), 2)
+
     def test_remove_folder_forgets_games(self):
         lib.scan_all(self.con)
         lib.remove_folder(self.con, self.root)

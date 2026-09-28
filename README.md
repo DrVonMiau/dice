@@ -24,6 +24,10 @@ right emulator. It only ever *reads* your folders.
 
 > The screenshots use a synthetic test library (generated box art), not real games.
 
+> [!IMPORTANT]
+> Dice doesn't include, download or link to any games. It organises and
+> launches backups of games you own.
+
 ## Features
 
 **Your library**
@@ -50,6 +54,19 @@ right emulator. It only ever *reads* your folders.
 - Tracks **last played** and **play time**
 - Double-click a cover or press <kbd>Enter</kbd> to play
 
+## Tidy file names
+
+`tools/fix-names.py` renames ROMs to their official No-Intro / Redump names —
+cartridges (GBA, DS) by checksum, discs (PS1, PS2, PSP; ISO, CSO, CHD,
+BIN/CUE) by the serial Dice reads from the disc. It previews by default,
+moves saves and covers along, and writes an undo script. Dice keeps a renamed
+game's favourites and history.
+
+```sh
+python3 tools/fix-names.py ~/Games/Roms            # preview
+python3 tools/fix-names.py ~/Games/Roms --apply    # rename
+```
+
 ## Adding a platform
 
 Platforms live in one registry, [`src/platforms.py`](src/platforms.py): its
@@ -62,7 +79,7 @@ others (PS1 was one; GameCube…) also want a content check in
 ## Install
 
 Grab the latest `.flatpak` bundle from the
-[**Releases**](https://github.com/DrVonMiau/roms/releases) page, then:
+[**Releases**](https://github.com/DrVonMiau/dice/releases) page, then:
 
 ```sh
 flatpak install --user io.github.drvonmiau.Dice.flatpak

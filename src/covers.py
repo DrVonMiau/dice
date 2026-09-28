@@ -16,7 +16,7 @@ from pathlib import Path
 from . import platforms
 
 BASE_URL = "https://thumbnails.libretro.com"
-USER_AGENT = "Dice/0.1 (+https://github.com/DrVonMiau/roms)"
+USER_AGENT = "Dice/0.1 (+https://github.com/DrVonMiau/dice)"
 # libretro replaces these characters with '_' in thumbnail file names.
 _UNSAFE = re.compile(r'[&*/:`<>?\\|"]')
 

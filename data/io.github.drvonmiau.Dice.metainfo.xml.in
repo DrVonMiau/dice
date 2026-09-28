@@ -15,6 +15,10 @@
 	    PSP and PlayStation 2 games, shows them as a shelf of box art, and launches each one in the
 	    right emulator.
 	  </p>
+	  <p>
+	    Dice doesn't include, download or link to any games. It organises and
+	    launches backups of games you own.
+	  </p>
 	  <p>Features:</p>
 	  <ul>
 	    <li>A tab per platform, plus All and Favourites</li>
@@ -30,9 +34,9 @@
 		<color type="primary" scheme_preference="light">#d6ede3</color>
 		<color type="primary" scheme_preference="dark">#1f3a2f</color>
 	</branding>
-	<url type="homepage">https://github.com/DrVonMiau/roms</url>
-	<url type="bugtracker">https://github.com/DrVonMiau/roms/issues</url>
-	<url type="vcs-browser">https://github.com/DrVonMiau/roms</url>
+	<url type="homepage">https://github.com/DrVonMiau/dice</url>
+	<url type="bugtracker">https://github.com/DrVonMiau/dice/issues</url>
+	<url type="vcs-browser">https://github.com/DrVonMiau/dice</url>
 	<requires>
 		<display_length compare="ge">768</display_length>
 	</requires>

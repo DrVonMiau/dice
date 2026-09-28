@@ -279,14 +279,34 @@ def _iter_rom_files(root):
 
 
 def scan_folder(con, root, progress=None):
-    """Index every ROM under `root`, updating changed files, adding new ones and
-    dropping rows whose files are gone. Returns the number of games found."""
-    files = list(_iter_rom_files(root))
+    """Index every ROM under `root`. Returns the number of games found."""
+    return _scan(con, [root], progress)
+
+
+def scan_all(con, progress=None):
+    return _scan(con, [r for r in all_folders(con) if os.path.isdir(r)], progress)
+
+
+def _identity(platform, size, serial, fmt):
+    """What makes a game recognisable after a rename or move: its platform,
+    size and serial (or format, for ROMs without a serial)."""
+    return (platform, size, serial) if serial else (platform, size, "", fmt)
+
+
+def _scan(con, roots, progress=None):
+    """Update changed files, add new ones and drop rows whose files are gone,
+    across `roots` at once. A file that vanished and a new file with the same
+    identity (see _identity) are the same game renamed or moved: its row
+    follows it, keeping favourites, play history and a picked cover."""
+    files = [f for root in roots for f in _iter_rom_files(root)]
     total = len(files)
-    known = {r["path"]: r for r in con.execute(
-        "SELECT id, path, mtime, cover_source, scan_version FROM games WHERE path LIKE ?",
-        (root.rstrip("/") + "/%",))}
+    known = {}
+    for root in roots:
+        for r in con.execute("SELECT * FROM games WHERE path LIKE ?",
+                             (root.rstrip("/") + "/%",)):
+            known[r["path"]] = r
     seen = set()
+    new = []            # (path, mtime, info) not in the library yet
     found = 0
     for i, (path, parts) in enumerate(files, start=1):
         if progress:
@@ -312,8 +332,31 @@ def scan_folder(con, root, progress=None):
             continue
         seen.add(path)
         found += 1
-        _store(con, path, mtime, info, existing)
-    gone = [p for p in known if p not in seen]
+        if existing is None:
+            new.append((path, mtime, info))
+        else:
+            _store(con, path, mtime, info, existing)
+
+    gone = {p: r for p, r in known.items() if p not in seen}
+    # Pair vanished rows with new files, but only when the identity is
+    # unambiguous on both sides (two copies of one game stay separate).
+    gone_by_id, new_by_id = {}, {}
+    for row in gone.values():
+        key = _identity(row["platform"], row["size"], row["serial"], row["format"])
+        gone_by_id.setdefault(key, []).append(row)
+    for item in new:
+        info = item[2]
+        key = _identity(info.platform, info.size, info.serial, info.format)
+        new_by_id.setdefault(key, []).append(item)
+    for key, items in new_by_id.items():
+        rows = gone_by_id.get(key, [])
+        if len(items) == 1 and len(rows) == 1:
+            path, mtime, info = items[0]
+            _store(con, path, mtime, info, rows[0])
+            del gone[rows[0]["path"]]
+        else:
+            for path, mtime, info in items:
+                _store(con, path, mtime, info, None)
     for path in gone:
         con.execute("DELETE FROM games WHERE path=?", (path,))
     con.commit()
@@ -336,7 +379,7 @@ def _store(con, path, mtime, info, existing):
                 cover, source = str(dest), "embedded"
             except OSError:
                 pass
-    values = dict(platform=info.platform, title=info.title, serial=info.serial,
+    values = dict(path=path, platform=info.platform, title=info.title, serial=info.serial,
                   internal_title=info.internal_title, region=info.region,
                   format=info.format, size=info.size, mtime=mtime,
                   scan_version=SCAN_VERSION)
@@ -361,6 +404,3 @@ def _store(con, path, mtime, info, existing):
     con.execute(f"UPDATE games SET {sets} WHERE id=?", params + [existing["id"]])
 
 
-def scan_all(con, progress=None):
-    return sum(scan_folder(con, root, progress) for root in all_folders(con)
-               if os.path.isdir(root))

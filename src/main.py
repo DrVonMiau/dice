@@ -57,9 +57,11 @@ class DiceApp(Adw.Application):
             version=self.version or "0.1.0",
             developer_name="Daniel",
             license_type=Gtk.License.GPL_3_0,
-            website="https://github.com/DrVonMiau/roms",
-            issue_url="https://github.com/DrVonMiau/roms/issues",
-            comments="A library for your emulator games — sibling of Lyre, Easel and Quill.",
+            website="https://github.com/DrVonMiau/dice",
+            issue_url="https://github.com/DrVonMiau/dice/issues",
+            comments="A library for your emulator games — sibling of Lyre, Easel and Quill.\n\n"
+                     "Dice doesn't include, download or link to any games. It organises "
+                     "and launches backups of games you own.",
         )
         about.present(self.window)
 
