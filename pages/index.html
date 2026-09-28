@@ -22,7 +22,7 @@
     margin: 0; background: var(--bg); color: var(--fg);
     font: 16px/1.55 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   }
-  main { max-width: 680px; margin: 0 auto; padding: 48px 16px 64px; }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 16px 64px; }
   .card {
     background: var(--card); border-radius: 16px; padding: 32px;
     box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(0,0,0,.08);
@@ -49,7 +49,16 @@
   }
   p { margin: 8px 0; }
   a { color: var(--accent); }
-  .note { color: var(--soft); font-size: 14px; }
+  .note { color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
+  .card { min-width: 0; }
+  pre { max-width: 100%; }
+  .shots { display: grid; gap: 20px; margin: 24px 0 8px; }
+  figure { margin: 0; }
+  figure img {
+    display: block; width: 100%; height: auto; border-radius: 12px;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.12);
+  }
+  figcaption { margin-top: 8px; font-size: 14px; color: var(--soft); text-align: center; }
   footer { margin-top: 24px; text-align: center; font-size: 14px; color: var(--soft); }
   @media (max-width: 480px) {
     .card { padding: 20px; }
@@ -71,6 +80,19 @@
     <p>Point Dice at your ROM folder: it finds your GBA, DS, 3DS, PS1, PSP and PS2
       games, shows them with their box art, and launches each one in the right
       emulator.</p>
+
+    <div class="shots">
+      <figure>
+        <img src="dice-library.png" width="1200" height="876"
+             alt="Dice showing a library of GBA, DS, PS1 and PS2 games, with one game open in the side panel">
+        <figcaption>Your games as a shelf of box art — pick one, press Play.</figcaption>
+      </figure>
+      <figure>
+        <img src="dice-dark.png" width="1200" height="876" loading="lazy"
+             alt="The Favourites tab in the dark theme">
+        <figcaption>Favourites, in the dark theme.</figcaption>
+      </figure>
+    </div>
 
     <h2>Install</h2>
     <p><a class="button" href="io.github.drvonmiau.Dice.flatpakref">Install with GNOME Software</a></p>

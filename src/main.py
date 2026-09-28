@@ -55,7 +55,7 @@ class DiceApp(Adw.Application):
             application_name="Dice",
             application_icon=APP_ID,
             version=self.version or "0.1.0",
-            developer_name="Daniel",
+            developer_name="Dr. von Miau",
             license_type=Gtk.License.GPL_3_0,
             website="https://github.com/DrVonMiau/dice",
             issue_url="https://github.com/DrVonMiau/dice/issues",

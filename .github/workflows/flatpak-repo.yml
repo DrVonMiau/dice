@@ -60,6 +60,9 @@ jobs:
           Name=io.github.drvonmiau.Dice
           Branch=master
           Title=Dice
+          Description=Browse and launch your emulator games
+          Homepage=https://drvonmiau.github.io/dice/
+          Icon=https://drvonmiau.github.io/dice/io.github.drvonmiau.Dice.png
           Url=https://drvonmiau.github.io/dice/
           SuggestRemoteName=dice
           RuntimeRepo=https://dl.flathub.org/repo/flathub.flatpakrepo
@@ -76,6 +79,8 @@ jobs:
           upload-pages-includes: |
             pages/index.html
             pages/io.github.drvonmiau.Dice.flatpakref
+            pages/screenshots/dice-library.png
+            pages/screenshots/dice-dark.png
             data/icons/hicolor/512x512/apps/io.github.drvonmiau.Dice.png
 
   deploy:
