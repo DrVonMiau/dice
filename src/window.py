@@ -1144,8 +1144,9 @@ class DiceWindow(Adw.ApplicationWindow):
         page = Adw.PreferencesPage()
         copies = sum(len(rows) for rows, _same in groups)
         intro = Adw.PreferencesGroup(
-            description=f"{len(groups)} game{'s' if len(groups) != 1 else ''} appear "
-                        f"more than once ({copies} files). Dice doesn’t delete anything: "
+            description=("1 game appears" if len(groups) == 1
+                         else f"{len(groups)} games appear") +
+                        f" more than once ({copies} files). Dice doesn’t delete anything: "
                         "use Show in Files to tidy up, then Rescan.")
         page.add(intro)
         for rows, identical in groups:

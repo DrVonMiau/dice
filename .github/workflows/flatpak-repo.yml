@@ -79,8 +79,16 @@ jobs:
           upload-pages-includes: |
             pages/index.html
             pages/io.github.drvonmiau.Dice.flatpakref
-            pages/screenshots/dice-library.png
-            pages/screenshots/dice-dark.png
+            pages/media/dice-files.webp
+            pages/media/dice-files.webm
+            pages/media/dice-files.mp4
+            pages/media/dice-video-files.webp
+            pages/media/dice-controller.webm
+            pages/media/dice-controller.mp4
+            pages/media/dice-video-controller.webp
+            pages/media/dice-library.webp
+            pages/media/dice-duplicates.webp
+            pages/media/dice-dark.webp
             data/icons/hicolor/512x512/apps/io.github.drvonmiau.Dice.png
 
   deploy:
