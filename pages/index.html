@@ -3,18 +3,20 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dice — install</title>
-<meta name="description" content="Dice, a calm library for your emulator games on GNOME. Install it as a Flatpak.">
+<title>Dice — a library for your emulator games</title>
+<meta name="description" content="Dice shows your ROM folder as a shelf of box art and launches each game in the emulator you already use. A GNOME app, installed as a Flatpak.">
 <link rel="icon" href="io.github.drvonmiau.Dice.png">
 <style>
   :root {
     --bg: #f4f3f1; --card: #ffffff; --fg: #1f1d1c; --soft: #6f5f5c;
     --accent: #c74e40; --accent-fg: #ffffff; --code: #f6eeec; --line: #e7dedc;
+    --shadow: 0 1px 2px rgba(0,0,0,.1), 0 8px 24px rgba(0,0,0,.16);
   }
   @media (prefers-color-scheme: dark) {
     :root {
       --bg: #1e1e1e; --card: #2a2a2a; --fg: #f2efee; --soft: #dfb0aa;
       --accent: #f98375; --accent-fg: #2b1310; --code: #332826; --line: #3d3534;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px rgba(0,0,0,.45);
     }
   }
   * { box-sizing: border-box; }
@@ -22,53 +24,108 @@
     margin: 0; background: var(--bg); color: var(--fg);
     font: 16px/1.55 "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
   }
-  main { max-width: 860px; margin: 0 auto; padding: 48px 16px 64px; }
+  main { max-width: 1290px; margin: 0 auto; padding: 48px 16px 64px; }
   .card {
-    background: var(--card); border-radius: 16px; padding: 32px;
+    background: var(--card); border-radius: 16px; padding: 32px; min-width: 0;
     box-shadow: 0 1px 2px rgba(0,0,0,.04), 0 12px 32px rgba(0,0,0,.08);
   }
+  /* The card is wide for the media; running text keeps a readable measure. */
+  .prose { max-width: 72ch; }
   header { display: flex; gap: 20px; align-items: center; margin-bottom: 24px; }
   header img { width: 96px; height: 96px; flex: none; }
+  header .title { flex: 1; min-width: 0; }
   h1 { margin: 0; font-size: 30px; letter-spacing: -.01em; }
   .tagline { margin: 4px 0 0; color: var(--soft); }
   h2 {
     font: 500 12px/1.4 "IBM Plex Mono", ui-monospace, monospace;
     letter-spacing: .14em; text-transform: uppercase; color: var(--soft);
-    margin: 28px 0 10px;
-  }
-  .button {
-    display: inline-block; background: var(--accent); color: var(--accent-fg);
-    font: 600 15px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .04em;
-    text-decoration: none; padding: 14px 22px; border-radius: 10px;
-  }
-  .button:hover { filter: brightness(1.06); }
-  pre {
-    background: var(--code); border-radius: 10px; padding: 14px 16px; margin: 0;
-    font: 13px/1.6 "IBM Plex Mono", ui-monospace, monospace;
-    overflow-x: auto; white-space: pre;
+    margin: 40px 0 12px;
   }
   p { margin: 8px 0; }
   a { color: var(--accent); }
+  code { font: 14px "IBM Plex Mono", ui-monospace, monospace; }
   .note { color: var(--soft); font-size: 14px; overflow-wrap: anywhere; }
-  .card { min-width: 0; }
-  pre { max-width: 100%; }
+  .lead { font-size: 18px; }
+
+  /* Install: a split button. The main part installs with GNOME Software; the
+     arrow opens a menu with both ways, the terminal one showing a dialog. */
+  .install { position: relative; display: flex; flex: none; }
+  .button, .more {
+    background: var(--accent); color: var(--accent-fg); border: 0; cursor: pointer;
+    font: 600 15px/1 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .04em;
+    text-decoration: none; padding: 14px 20px; border-radius: 10px;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .button:hover, .more:hover { filter: brightness(1.06); }
+  .button:focus-visible, .more:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+  .install.ready .button { border-radius: 10px 0 0 10px; }
+  .more {
+    display: none; padding: 14px 12px; border-radius: 0 10px 10px 0;
+    border-left: 1px solid color-mix(in srgb, var(--accent-fg) 30%, transparent);
+  }
+  .install.ready .more { display: inline-flex; }
+  .more svg { width: 14px; height: 14px; transition: transform .15s; }
+  .more[aria-expanded="true"] svg { transform: rotate(180deg); }
+  .menu {
+    position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; min-width: 270px;
+    background: var(--card); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: var(--shadow); padding: 6px; margin: 0; list-style: none;
+  }
+  .menu[hidden] { display: none; }
+  .menu a, .menu button {
+    display: block; width: 100%; text-align: left; padding: 10px 12px; border: 0;
+    border-radius: 8px; background: none; color: var(--fg); cursor: pointer;
+    font: 15px/1.3 inherit; font-family: inherit; text-decoration: none;
+  }
+  .menu small { display: block; color: var(--soft); font-size: 13px; margin-top: 2px; }
+  .menu a:hover, .menu button:hover, .menu a:focus-visible, .menu button:focus-visible {
+    background: var(--code); outline: none;
+  }
+
+  dialog {
+    width: min(640px, calc(100vw - 32px)); border: 0; border-radius: 16px; padding: 24px;
+    background: var(--card); color: var(--fg); box-shadow: var(--shadow);
+  }
+  dialog::backdrop { background: rgba(0,0,0,.45); }
+  dialog h3 { margin: 0 40px 12px 0; font-size: 18px; }
+  dialog .close {
+    position: absolute; top: 14px; right: 14px; width: 34px; height: 34px; border: 0;
+    border-radius: 50%; background: var(--code); color: var(--fg); cursor: pointer;
+    display: grid; place-items: center;
+  }
+  dialog .close svg { width: 14px; height: 14px; }
+  dialog .close:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  pre {
+    background: var(--code); border-radius: 10px; padding: 14px 16px; margin: 0;
+    font: 13px/1.6 "IBM Plex Mono", ui-monospace, monospace;
+    overflow-x: auto; white-space: pre; max-width: 100%;
+  }
+
   /* Screenshot carousel: native horizontal scroll with snap points, so
      swipe and trackpad work without JS; the next slide peeks in at the edge.
      JS only adds the arrows, dots and arrow-key handling. */
-  .carousel { position: relative; margin: 24px -32px 8px; }
+  .carousel { position: relative; margin: 28px -32px 8px; }
   .track {
-    display: flex; gap: 16px; overflow-x: auto; scroll-snap-type: x mandatory;
-    scroll-padding: 0 32px; padding: 4px 32px 16px; scrollbar-width: none;
-    overscroll-behavior-x: contain;
+    display: flex; align-items: flex-start; gap: 16px; overflow-x: auto;
+    scroll-snap-type: x mandatory; scroll-padding: 0 32px; padding: 4px 32px 16px;
+    scrollbar-width: none; overscroll-behavior-x: contain;
   }
   .track::-webkit-scrollbar { display: none; }
   .track:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; border-radius: 12px; }
-  .slide { flex: 0 0 86%; margin: 0; scroll-snap-align: start; }
-  .slide img {
-    display: block; width: 100%; height: auto; border-radius: 12px;
+  /* Every slide has the same height and its own width, so screenshots of
+     different shapes line up and the next one still peeks in. */
+  .slide { flex: 0 0 auto; max-width: 86%; margin: 0; scroll-snap-align: start; }
+  .slide img, .slide video {
+    display: block; height: min(520px, 38vw); width: auto; max-width: 100%;
+    object-fit: contain; border-radius: 12px; background: var(--code);
     box-shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.12);
   }
-  figcaption { margin-top: 8px; font-size: 14px; color: var(--soft); text-align: center; }
+  /* Captions wrap to the picture's width instead of widening the slide. */
+  figcaption {
+    width: 0; min-width: 100%; margin-top: 8px; font-size: 14px; color: var(--soft);
+    text-align: center;
+  }
   .arrow {
     position: absolute; top: calc(50% - 30px); width: 40px; height: 40px;
     border: 0; border-radius: 50%; cursor: pointer; display: grid; place-items: center;
@@ -94,8 +151,9 @@
   .dots button:focus-visible { outline: 2px solid var(--accent); border-radius: 50%; }
   .carousel:not(.ready) .arrow, .carousel:not(.ready) .dots { display: none; }
   @media (prefers-reduced-motion: reduce) { .track { scroll-behavior: auto; } }
+
   /* Copy button in the corner of a terminal snippet. */
-  .code { position: relative; }
+  .code { position: relative; margin: 12px 0; }
   .code pre { padding-right: 52px; }
   .copy {
     position: absolute; top: 8px; right: 8px; width: 34px; height: 34px;
@@ -110,13 +168,59 @@
   .copy.copied .idle { display: none; }
   .copy.copied .done { display: block; }
   .copy:not(.ready) { display: none; }
+
+  /* Comparison table; rows stack into cards on narrow screens. */
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; vertical-align: top; padding: 12px 16px 12px 0; }
+  thead th {
+    font: 500 12px/1.4 "IBM Plex Mono", ui-monospace, monospace; letter-spacing: .08em;
+    text-transform: uppercase; color: var(--soft); border-bottom: 1px solid var(--line);
+  }
+  tbody tr + tr > * { border-top: 1px solid var(--line); }
+  tbody th { font-weight: 600; white-space: nowrap; }
+  tbody td:nth-child(2) { color: var(--soft); width: 32%; }
+
+  /* FAQ */
+  .faq { border-top: 1px solid var(--line); }
+  details { border-bottom: 1px solid var(--line); }
+  summary {
+    cursor: pointer; list-style: none; padding: 14px 32px 14px 0; font-weight: 600;
+    position: relative;
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "+"; position: absolute; right: 4px; top: 10px; font: 400 22px/1 inherit;
+    color: var(--soft);
+  }
+  details[open] summary::after { content: "–"; }
+  summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  details > :not(summary) { margin: 0 0 12px; }
+  details > p:last-child, details > .code:last-child { margin-bottom: 16px; }
+
   footer { margin-top: 24px; text-align: center; font-size: 14px; color: var(--soft); }
+
+  @media (max-width: 700px) {
+    table, tbody, tr, th, td { display: block; }
+    thead { display: none; }
+    tbody tr { padding: 12px 0; }
+    tbody tr + tr { border-top: 1px solid var(--line); }
+    tbody tr + tr > * { border-top: 0; }
+    th, td { padding: 2px 0; }
+    tbody td:nth-child(2) { width: auto; }
+  }
+  @media (max-width: 600px) {
+    header { flex-wrap: wrap; }
+    header img { width: 72px; height: 72px; }
+    .install { flex-basis: 100%; }
+    .install .button { flex: 1; justify-content: center; }
+    .menu { left: 0; right: 0; min-width: 0; }
+  }
   @media (max-width: 480px) {
     .card { padding: 20px; }
     .carousel { margin-left: -20px; margin-right: -20px; }
     .track { scroll-padding: 0 20px; padding-left: 20px; padding-right: 20px; }
     .arrow { display: none; }
-    header { flex-direction: column; align-items: flex-start; }
+    .slide img, .slide video { height: 36vw; }
   }
 </style>
 </head>
@@ -125,87 +229,281 @@
   <div class="card">
     <header>
       <img src="io.github.drvonmiau.Dice.png" alt="">
-      <div>
+      <div class="title">
         <h1>Dice</h1>
         <p class="tagline">A calm library for your emulator games on GNOME.</p>
       </div>
+      <div class="install">
+        <a class="button" href="io.github.drvonmiau.Dice.flatpakref">Install</a>
+        <button class="more" type="button" aria-label="More ways to install"
+                aria-haspopup="true" aria-expanded="false" aria-controls="install-menu">
+          <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <ul class="menu" id="install-menu" hidden>
+          <li><a href="io.github.drvonmiau.Dice.flatpakref">Install with GNOME Software
+            <small>Opens your app store; updates arrive like any other app</small></a></li>
+          <li><button type="button" data-open="terminal-dialog">Install from a terminal…
+            <small>Two <code>flatpak</code> commands to copy</small></button></li>
+        </ul>
+      </div>
     </header>
 
-    <p>Point Dice at your ROM folder: it finds your GBA, DS, 3DS, PS1, PSP and PS2
-      games, shows them with their box art, and launches each one in the right
-      emulator.</p>
+    <div class="prose">
+      <p class="lead">Dice shows your ROM folder as a shelf of box art and launches
+        each game in the emulator you already use. No renaming folders, no scraper
+        accounts, no fullscreen TV mode.</p>
+      <p>It finds your GBA, DS, 3DS, PS1, PSP and PS2 games — more systems are
+        coming — and never changes your files, so removing it leaves your
+        collection exactly as it was.</p>
+    </div>
 
-    <section class="carousel" aria-roledescription="carousel" aria-label="Screenshots">
+    <section class="carousel" aria-roledescription="carousel" aria-label="Screenshots and videos">
       <div class="track" tabindex="0">
-        <figure class="slide" aria-roledescription="slide" aria-label="1 of 2">
-          <img src="dice-library.png" width="1200" height="876"
-               alt="Dice showing a library of GBA, DS, PS1 and PS2 games, with one game open in the side panel">
-          <figcaption>Your games as a shelf of box art — pick one, press Play.</figcaption>
+        <figure class="slide" aria-roledescription="slide" aria-label="1 of 6">
+          <img src="dice-files.webp" width="1800" height="908"
+               alt="The Roms folder in Files, with one folder per system, next to Dice showing the same games as box art">
+          <figcaption>Your folders as they are — Dice reads them and turns them into a shelf.</figcaption>
         </figure>
-        <figure class="slide" aria-roledescription="slide" aria-label="2 of 2">
-          <img src="dice-dark.png" width="1200" height="876" loading="lazy"
+        <figure class="slide" aria-roledescription="slide" aria-label="2 of 6">
+          <video poster="dice-video-files.webp" width="1920" height="1080"
+                 muted loop playsinline controls preload="none"
+                 aria-label="Video: a GBA game found in Files and in Dice, given a cover image and launched">
+            <source src="dice-files.webm" type="video/webm">
+            <source src="dice-files.mp4" type="video/mp4">
+          </video>
+          <figcaption>Files and Dice side by side: set a cover for a GBA game, then press Play.</figcaption>
+        </figure>
+        <figure class="slide" aria-roledescription="slide" aria-label="3 of 6">
+          <video poster="dice-video-controller.webp" width="1920" height="1080"
+                 muted loop playsinline controls preload="none"
+                 aria-label="Video: browsing Dice with a controller and starting a PlayStation 2 game">
+            <source src="dice-controller.webm" type="video/webm">
+            <source src="dice-controller.mp4" type="video/mp4">
+          </video>
+          <figcaption>Browse with a controller and start a PS2 game without touching the mouse.</figcaption>
+        </figure>
+        <figure class="slide" aria-roledescription="slide" aria-label="4 of 6">
+          <img src="dice-library.webp" width="1742" height="1264" loading="lazy"
+               alt="Dice showing a library of GBA, DS, PS1 and PS2 games, with one game open in the side panel">
+          <figcaption>Pick a game to see its details, then press Play.</figcaption>
+        </figure>
+        <figure class="slide" aria-roledescription="slide" aria-label="5 of 6">
+          <img src="dice-duplicates.webp" width="1800" height="1058" loading="lazy"
+               alt="The Possible Duplicates window listing two files of Kirby &amp; The Amazing Mirror">
+          <figcaption>Find Duplicates spots the same game under two names. Dice never deletes anything.</figcaption>
+        </figure>
+        <figure class="slide" aria-roledescription="slide" aria-label="6 of 6">
+          <img src="dice-dark.webp" width="1742" height="1264" loading="lazy"
                alt="The Favourites tab in the dark theme">
           <figcaption>Favourites, in the dark theme.</figcaption>
         </figure>
       </div>
-      <button class="arrow prev" type="button" aria-label="Previous screenshot">
+      <button class="arrow prev" type="button" aria-label="Previous slide">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M10 3 5 8l5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <button class="arrow next" type="button" aria-label="Next screenshot">
+      <button class="arrow next" type="button" aria-label="Next slide">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m6 3 5 5-5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div class="dots"></div>
     </section>
 
-    <h2>Install</h2>
-    <p><a class="button" href="io.github.drvonmiau.Dice.flatpakref">Install with GNOME Software</a></p>
-    <p class="note">Opens GNOME Software (or your distro's app store) and adds this
-      repository, so Dice updates like any other app.</p>
+    <h2 id="compare">How Dice compares</h2>
+    <p class="prose">Dice is small on purpose. If one of these fits you better, it's a
+      great choice:</p>
+    <table>
+      <thead><tr><th scope="col">App</th><th scope="col">Made for</th><th scope="col">Compared with Dice</th></tr></thead>
+      <tbody>
+        <tr><th scope="row">ES-DE</th>
+          <td>TV and handheld setups with 100+ systems</td>
+          <td>Fullscreen and controller-first, with one folder per system under exact
+            names like <code>ps2</code> or <code>psx</code>. Dice runs in a window and
+            reads the folders you already have.</td></tr>
+        <tr><th scope="row">Pegasus</th>
+          <td>Heavily themed setups on PCs, TVs and handhelds</td>
+          <td>Themes and metadata files to set up. Dice has none.</td></tr>
+        <tr><th scope="row">RetroArch</th>
+          <td>Playing through its own built-in emulator cores</td>
+          <td>Its playlists launch RetroArch cores. Dice starts the standalone
+            emulators you already use.</td></tr>
+        <tr><th scope="row">Cartridges</th>
+          <td>Steam, Lutris, Heroic and other launchers on GNOME</td>
+          <td>The closest in spirit, but it reaches ROMs only through RetroArch. Dice
+            is built around your ROM folder.</td></tr>
+        <tr><th scope="row">RomM</th>
+          <td>A home server shared by several people, playing in the browser</td>
+          <td>Runs as a web service, usually in Docker. Dice is a desktop app.</td></tr>
+      </tbody>
+    </table>
 
-    <h2>Or from a terminal</h2>
-<div class="code">
+    <h2 id="faq">Questions</h2>
+    <div class="faq prose">
+      <details>
+        <summary>Which systems does Dice support?</summary>
+        <p>Game Boy Advance, Nintendo DS, Nintendo 3DS, PlayStation, PSP and
+          PlayStation 2. More systems are coming.</p>
+      </details>
+      <details>
+        <summary>Do I have to rename or reorganise my folders?</summary>
+        <p>No. Folder names like “PS2”, “PlayStation 2” or “N3DS” help, but Dice
+          also reads each game's own header, so it can tell a PS1 disc from a PS2
+          or PSP one even in a mixed folder.</p>
+      </details>
+      <details>
+        <summary>Where does the box art come from?</summary>
+        <p>From images next to your ROMs, the art inside PSP discs, or the libretro
+          thumbnail collection, matched by name. No account needed. You can also
+          set any image as a game's cover.</p>
+      </details>
+      <details>
+        <summary>Which emulators does it work with?</summary>
+        <p>It finds mGBA, melonDS, Azahar, DuckStation, PPSSPP and PCSX2 on its own,
+          whether they're Flatpaks or installed from your distribution, and can run
+          any other emulator with a command you set. Emulators are installed
+          separately, for example from Flathub.</p>
+      </details>
+      <details>
+        <summary>Does Dice change my files?</summary>
+        <p>No. It only reads your ROMs to find games and covers, and keeps its
+          library, covers and settings in its own folder. Removing Dice leaves your
+          collection exactly as it was.</p>
+      </details>
+      <details>
+        <summary>Can I use a controller?</summary>
+        <p>Yes. Move through the grid, open a game and press Play with a gamepad.</p>
+      </details>
+      <details>
+        <summary>Does Dice come with games?</summary>
+        <p>No. Dice doesn't include, download or link to any games. It organises
+          and launches backups of games you own.</p>
+      </details>
+      <details>
+        <summary>Why does GNOME Software list broad permissions?</summary>
+        <p>Dice starts your emulators, which are usually Flatpaks too, so it asks
+          Flatpak to run them and to let them see your game folder. It reads your
+          files to find games and covers, and never changes or uploads them.</p>
+      </details>
+      <details>
+        <summary>Why isn't Dice on Flathub?</summary>
+        <p>Flathub doesn't accept new apps made with AI assistance, and Dice was
+          built with help from Claude. It's published from its own signed
+          repository instead, and updates arrive through GNOME Software or
+          <code>flatpak update</code> like any other app.</p>
+      </details>
+      <details id="terminal">
+        <summary>How do I install or remove it from a terminal?</summary>
+        <p>To install:</p>
+        <div class="code">
 <pre>flatpak remote-add --user --if-not-exists dice \
     https://drvonmiau.github.io/dice/index.flatpakrepo
 flatpak install --user dice io.github.drvonmiau.Dice</pre>
-      <button class="copy" type="button" aria-label="Copy commands" title="Copy">
-        <svg class="idle" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
-        <svg class="done" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.5 3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      </button>
+          <button class="copy" type="button" aria-label="Copy commands" title="Copy">
+            <svg class="idle" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+            <svg class="done" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.5 3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+        <p>To remove Dice and its repository:</p>
+        <div class="code">
+<pre>flatpak uninstall --user io.github.drvonmiau.Dice
+flatpak remote-delete --user dice</pre>
+          <button class="copy" type="button" aria-label="Copy commands" title="Copy">
+            <svg class="idle" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+            <svg class="done" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.5 3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          </button>
+        </div>
+      </details>
     </div>
-    <p class="note">Updates then arrive with <code>flatpak update</code>. You need
-      <a href="https://flatpak.org/setup/">Flatpak</a>, which most Linux
-      distributions already have. Emulators are installed separately — for
-      example mGBA, melonDS, PPSSPP or PCSX2 from Flathub.</p>
 
     <h2>About</h2>
-    <p>Dice doesn't include, download or link to any games. It organises and
-      launches backups of games you own. Free software under the GPL 3.0 or later.</p>
-    <p class="note">Why GNOME Software lists broad permissions: Dice starts your
-      emulators, which are usually Flatpaks too, so it asks Flatpak to run them
-      and to let them see your game folder. It only reads your files, to find
-      games and covers — it never changes or uploads them.</p>
+    <p class="prose">Free software under the GPL 3.0 or later, made by Dr. von Miau.
+      <a href="https://github.com/DrVonMiau/dice">Source and issues on GitHub</a>.</p>
   </div>
   <footer>
-    <a href="https://github.com/DrVonMiau/dice">Source on GitHub</a> ·
     A sibling of <a href="https://github.com/DrVonMiau/lyre">Lyre</a>,
     <a href="https://github.com/DrVonMiau/easel">Easel</a> and
     <a href="https://github.com/DrVonMiau/quill">Quill</a>
   </footer>
 </main>
+
+<dialog id="terminal-dialog" aria-labelledby="terminal-title">
+  <h3 id="terminal-title">Install from a terminal</h3>
+  <button class="close" type="button" aria-label="Close">
+    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="m3 3 10 10M13 3 3 13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+  </button>
+  <div class="code">
+<pre>flatpak remote-add --user --if-not-exists dice \
+    https://drvonmiau.github.io/dice/index.flatpakrepo
+flatpak install --user dice io.github.drvonmiau.Dice</pre>
+    <button class="copy" type="button" aria-label="Copy commands" title="Copy">
+      <svg class="idle" viewBox="0 0 16 16" aria-hidden="true"><rect x="5" y="5" width="9" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M11 5V3.5A1.5 1.5 0 0 0 9.5 2h-6A1.5 1.5 0 0 0 2 3.5v6A1.5 1.5 0 0 0 3.5 11H5" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>
+      <svg class="done" viewBox="0 0 16 16" aria-hidden="true"><path d="m3 8.5 3 3 7-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <p class="note">Updates then arrive with <code>flatpak update</code>. You need
+    <a href="https://flatpak.org/setup/">Flatpak</a>, which most Linux
+    distributions already have.</p>
+</dialog>
+
 <script>
+// Install menu: the arrow next to Install opens it; Escape, a click outside or
+// picking an item closes it. Up/Down move between the items.
+{
+  const box = document.querySelector(".install");
+  const more = box.querySelector(".more");
+  const menu = box.querySelector(".menu");
+  const items = () => [...menu.querySelectorAll("a, button")];
+  const open = (focusFirst) => {
+    menu.hidden = false;
+    more.setAttribute("aria-expanded", "true");
+    if (focusFirst) items()[0].focus();
+  };
+  const close = (refocus) => {
+    if (menu.hidden) return;
+    menu.hidden = true;
+    more.setAttribute("aria-expanded", "false");
+    if (refocus) more.focus();
+  };
+  more.addEventListener("click", () => (menu.hidden ? open(false) : close(false)));
+  more.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown") { e.preventDefault(); open(true); }
+  });
+  menu.addEventListener("keydown", (e) => {
+    const list = items(), i = list.indexOf(document.activeElement);
+    if (e.key === "Escape") { e.preventDefault(); close(true); }
+    if (e.key === "ArrowDown") { e.preventDefault(); list[(i + 1) % list.length].focus(); }
+    if (e.key === "ArrowUp") { e.preventDefault(); list[(i - 1 + list.length) % list.length].focus(); }
+  });
+  menu.addEventListener("click", () => close(false));
+  document.addEventListener("click", (e) => { if (!box.contains(e.target)) close(false); });
+  box.addEventListener("focusout", (e) => { if (!box.contains(e.relatedTarget)) close(false); });
+  box.classList.add("ready");
+}
+
+// Dialogs: buttons with data-open show one; the close button or a click on the
+// backdrop hides it (Escape is built in).
+for (const btn of document.querySelectorAll("[data-open]")) {
+  const dialog = document.getElementById(btn.dataset.open);
+  btn.addEventListener("click", () => dialog.showModal());
+}
+for (const dialog of document.querySelectorAll("dialog")) {
+  dialog.querySelector(".close").addEventListener("click", () => dialog.close());
+  dialog.addEventListener("click", (e) => { if (e.target === dialog) dialog.close(); });
+}
+
 // Screenshot carousel. Scrolling is native (swipe, trackpad, scroll-snap);
-// this only wires up the arrows, the dots and the arrow keys.
+// this only wires up the arrows, the dots and the arrow keys, and plays a
+// video only while its slide is on screen.
 for (const root of document.querySelectorAll(".carousel")) {
   const track = root.querySelector(".track");
   const slides = [...track.children];
   const prev = root.querySelector(".prev");
   const next = root.querySelector(".next");
   const dotBox = root.querySelector(".dots");
-  const smooth = matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth";
+  const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const smooth = reduced ? "auto" : "smooth";
   const dots = slides.map((_, i) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.setAttribute("aria-label", `Show screenshot ${i + 1}`);
+    b.setAttribute("aria-label", `Show slide ${i + 1}`);
     b.addEventListener("click", () => go(i));
     dotBox.append(b);
     return b;
@@ -235,11 +533,26 @@ for (const root of document.querySelectorAll(".carousel")) {
   prev.addEventListener("click", () => go(current() - 1));
   next.addEventListener("click", () => go(current() + 1));
   track.addEventListener("keydown", (e) => {
+    if (e.target !== track) return;  // leave video controls their own keys
     if (e.key === "ArrowLeft") { e.preventDefault(); go(current() - 1); }
     if (e.key === "ArrowRight") { e.preventDefault(); go(current() + 1); }
   });
   track.addEventListener("scroll", () => requestAnimationFrame(update), { passive: true });
   addEventListener("resize", update);
+
+  // Videos play (muted, looping) while mostly visible and pause otherwise.
+  // With reduced motion they wait for the viewer to press play.
+  const videos = root.querySelectorAll("video");
+  if (!reduced && "IntersectionObserver" in window) {
+    const seen = new IntersectionObserver((entries) => {
+      for (const { target, isIntersecting } of entries) {
+        if (isIntersecting) target.play().catch(() => {});
+        else target.pause();
+      }
+    }, { root: null, threshold: 0.6 });
+    videos.forEach((v) => seen.observe(v));
+  }
+
   root.classList.add("ready");
   update();
 }
