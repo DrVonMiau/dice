@@ -19,6 +19,11 @@
 	    Dice doesn't include, download or link to any games. It organises and
 	    launches backups of games you own.
 	  </p>
+	  <p>
+	    Why the permissions: Dice starts your emulators, which are usually
+	    Flatpaks too, so it asks Flatpak to run them and to let them see your
+	    game folder. It only reads your files, to find games and covers.
+	  </p>
 	  <p>Features:</p>
 	  <ul>
 	    <li>A tab per platform, plus All and Favourites</li>
